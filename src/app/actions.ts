@@ -376,7 +376,7 @@ export async function getTemplates() {
 
       const seeded = await prisma.labelTemplate.create({
         data: {
-          name: 'Spoko S060630380 – 3×7 (výchozí)',
+          name: 'Standardní 3×7 – 63,5×38,1 mm (výchozí)',
           fieldsConfig: JSON.stringify(defaultFields),
           fontConfig: JSON.stringify(defaultFonts),
           layoutConfig: JSON.stringify(defaultLayout),
@@ -629,52 +629,52 @@ export async function seedSampleProducts() {
   try {
     const samples = [
       {
-        sku: 'SPK-UT-001',
+        sku: 'PRD-UT-001',
         name: 'Čisticí utěrky z mikrovlákna Premium (sada 5ks)',
-        brand: 'Spoko Clean',
+        brand: 'EcoClean',
         price: 189,
         safetyText: 'Nepoužívejte na horké povrchy. Udržujte mimo dosah přímého plamene.',
-        contactText: 'Spoko ČR s.r.o., Dlouhá 12, Praha',
+        contactText: 'Distributor s.r.o., Dlouhá 12, Praha',
         ean: '8594001230012',
         note: 'Bestseller'
       },
       {
-        sku: 'SPK-SP-002',
+        sku: 'PRD-SP-002',
         name: 'Ekologický čisticí sprej na okna a zrcadla 500ml',
-        brand: 'Spoko Green',
+        brand: 'EcoGreen',
         price: 129,
         safetyText: 'Při zasažení očí okamžitě důkladně vypláchněte vodou. Chraňte před dětmi.',
-        contactText: 'Spoko ČR s.r.o., Dlouhá 12, Praha',
+        contactText: 'Distributor s.r.o., Dlouhá 12, Praha',
         ean: '8594001230029',
         note: 'Eko produkt'
       },
       {
-        sku: 'SPK-DE-003',
+        sku: 'PRD-DE-003',
         name: 'Dezinfekční gel na ruce s Aloe Vera 100ml',
-        brand: 'Spoko Care',
+        brand: 'EcoCare',
         price: 59,
         safetyText: 'Hořlavá kapalina. Zamezte kontaktu s otevřeným ohněm. Pouze pro vnější použití.',
-        contactText: 'Spoko ČR s.r.o., Dlouhá 12, Praha',
+        contactText: 'Distributor s.r.o., Dlouhá 12, Praha',
         ean: '8594001230036',
         note: 'Kapesní balení'
       },
       {
-        sku: 'SPK-RO-004',
+        sku: 'PRD-RO-004',
         name: 'Papírové kuchyňské role 3-vrstvé (balení 4ks)',
-        brand: 'Spoko Paper',
+        brand: 'EcoPaper',
         price: 79,
         safetyText: 'Skladujte v suchu. Obal zlikvidujte v rámci tříděného odpadu.',
-        contactText: 'Spoko ČR s.r.o., Dlouhá 12, Praha',
+        contactText: 'Distributor s.r.o., Dlouhá 12, Praha',
         ean: '8594001230043',
         note: 'Objemné zboží'
       },
       {
-        sku: 'SPK-ME-005',
+        sku: 'PRD-ME-005',
         name: 'Melaminové čistící nanohoubičky (balení 10ks)',
-        brand: 'Spoko Clean',
+        brand: 'EcoClean',
         price: 99,
         safetyText: 'Nepoužívejte na kůži nebo leštěné povrchy. Může způsobit oděrky.',
-        contactText: 'Spoko ČR s.r.o., Dlouhá 12, Praha',
+        contactText: 'Distributor s.r.o., Dlouhá 12, Praha',
         ean: '8594001230050',
         note: 'Bez chemie'
       }

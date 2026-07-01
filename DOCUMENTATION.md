@@ -1,12 +1,12 @@
-# Kompletní technická dokumentace – Štítkovač Spoko
+# Kompletní technická dokumentace – Generátor štítků
 
-Tento dokument slouží jako komplexní průvodce architekturou, databázovým schématem, chováním jednotlivých modulů, API a rozšiřováním aplikace **Štítkovač Spoko**.
+Tento dokument slouží jako komplexní průvodce architekturou, databázovým schématem, chováním jednotlivých modulů, API a rozšiřováním aplikace **Generátor štítků**.
 
 ---
 
 ## 1. Celkový přehled a adresářová struktura
 
-Aplikace **Štítkovač Spoko** je postavena jako monolitická webová aplikace v Next.js (App Router) v kombinaci se SQLite databází a Prisma ORM. Generování PDF souborů probíhá kompletně na straně klienta.
+Aplikace **Generátor štítků** je postavena jako monolitická webová aplikace v Next.js (App Router) v kombinaci se SQLite databází a Prisma ORM. Generování PDF souborů probíhá kompletně na straně klienta.
 
 ```mermaid
 graph TD
@@ -91,7 +91,7 @@ Reprezentuje záznam produktu. Každý produkt má unikátní kód (`sku`).
 ### 3.2. `LabelTemplate`
 Konfigurace vzhledu a přesného tiskového rozložení štítků na archu A4.
 *   `id` (String, UUID, PK)
-*   `name` (String) – Název šablony (např. „Spoko S060630380“).
+*   `name` (String) – Název šablony (např. „Avery L7160“).
 *   `fieldsConfig` (String, JSON) – Která pole se mají na štítku tisknout: `showName`, `showSku`, `showBrand`, `showPrice`, `showSafetyText`, `showContactText`, `showEan`.
 *   `fontConfig` (String, JSON) – Velikosti písem v bodech: `nameFontSize`, `skuFontSize`, `brandFontSize`, `priceFontSize`, `bodyFontSize`.
 *   `layoutConfig` (String, JSON) – Fyzické rozměry archu v mm:

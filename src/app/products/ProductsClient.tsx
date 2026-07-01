@@ -1018,7 +1018,7 @@ export default function ProductsPage() {
                   <label className="block text-xs font-bold text-slate-650 mb-1 uppercase tracking-wider">Značka</label>
                   <input
                     type="text"
-                    placeholder="Např: Spoko"
+                    placeholder="Např: Výrobce s.r.o."
                     value={newProductForm.brand}
                     onChange={(e) => setNewProductForm({ ...newProductForm, brand: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none"
@@ -1072,7 +1072,7 @@ export default function ProductsPage() {
                 <label className="block text-xs font-bold text-slate-650 mb-1 uppercase tracking-wider">Kontaktní údaje (Distributor)</label>
                 <textarea
                   rows={3}
-                  placeholder="Např: Spoko s.r.o.&#10;www.spoko.cz&#10;tel: +420 123 456&#10;info@spoko.cz"
+                  placeholder="Např: Distributor s.r.o.&#10;www.distributor.cz&#10;tel: +420 123 456&#10;info@distributor.cz"
                   value={newProductForm.contactText}
                   onChange={(e) => setNewProductForm({ ...newProductForm, contactText: e.target.value })}
                   className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none"

@@ -382,7 +382,7 @@ export default async function DashboardPage() {
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs pb-2.5 border-b border-slate-50">
                 <span className="text-slate-500 font-medium">Typ archu:</span>
-                <span className="font-semibold text-slate-800">A4 Spoko S060630380</span>
+                <span className="font-semibold text-slate-800">A4 Avery L7160 (3×7)</span>
               </div>
               <div className="flex items-center justify-between text-xs pb-2.5 border-b border-slate-50">
                 <span className="text-slate-500 font-medium">Uspořádání:</span>

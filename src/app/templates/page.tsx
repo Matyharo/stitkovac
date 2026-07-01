@@ -102,8 +102,8 @@ export default function TemplatesPage() {
   const [templateName, setTemplateName] = useState('');
   const [previewProduct, setPreviewProduct] = useState<any>({
     name: 'Čisticí utěrky z mikrovlákna Premium',
-    sku: 'SPK-UT-001',
-    brand: 'Spoko Clean',
+    sku: 'PRD-UT-001',
+    brand: 'EcoClean',
     price: 189,
     safetyText: 'Uchovávejte mimo dosah dětí. Pouze pro vnější použití.',
     contactText: 'Evolution Beauty Institut s. r. o.\nIČO: 07996811\n5. května 70, 140 00 Praha 4\nwww.depilujeme.cz',
@@ -286,7 +286,7 @@ export default function TemplatesPage() {
     setIsNew(true);
     setTemplateName('Nová šablona štítku');
     
-    // Reset to defaults (Spoko S060630380 dimensions)
+    // Reset to defaults (Avery L7160 dimensions)
     setFields({
       showName: true,
       showSku: false,
@@ -581,7 +581,7 @@ export default function TemplatesPage() {
                 required
                 value={templateName}
                 onChange={(e) => setTemplateName(e.target.value)}
-                placeholder="Např: Horní tiskárna HP (Spoko 3x7)"
+                placeholder="Např: Horní tiskárna HP (Avery 3x7)"
                 className="w-full max-w-md rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none"
               />
             </div>

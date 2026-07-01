@@ -1,8 +1,8 @@
-# Štítkovač Spoko - Generátor produktových štítků
+# Generátor štítků - Tisk produktových etiket
 
 Interní webová aplikace pro e-shopy, která usnadňuje nahrávání produktových dat z Excelu/CSV, správu katalogu, správu šablon štítků a přesné generování tiskových PDF na archy A4 (3 sloupce × 7 řad).
 
-Aplikace je plně lokalizována do češtiny a připravena pro tisk na etikety typu **Spoko S060630380** (nebo ekvivalenty Avery L7160) s rozměrem **63,5 × 38,1 mm**.
+Aplikace je plně lokalizována do češtiny a připravena pro tisk na etikety typu **Avery L7160** (nebo ekvivalentní rozměry) s velikostí **63,5 × 38,1 mm**.
 
 ## Technologický stoh
 
@@ -63,7 +63,7 @@ V sekci **Správa produktů** můžete:
 
 ### 3. Tisk štítků (Arch A4)
 1. Přejděte do sekce **Tisk štítků**.
-2. Zvolte šablonu (výchozí je *Spoko S060630380*).
+2. Zvolte šablonu (výchozí je *Standardní 3×7*).
 3. Pomocí vyhledávacího pole vyhledejte a přidejte produkty, které chcete vytisknout.
 4. Zadejte počet štítků (množství) pro každý produkt.
 5. **Startovní pozice:** Na zobrazeném 3x7 archu klikněte na libovolnou pozici (1 až 21). Pokud máte napůl spotřebovaný arch štítků, např. s 3 vyloupnutými štítky, klikněte na pozici **4**. Tisk začne přesně na 4. pozici a první 3 pozice zůstanou prázdné.

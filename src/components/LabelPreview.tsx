@@ -61,11 +61,11 @@ interface LabelPreviewProps {
 
 const defaultProduct: ProductData = {
   name: 'Čisticí utěrky z mikrovlákna Premium',
-  sku: 'SPK-UT-001',
-  brand: 'Spoko Clean',
+  sku: 'PRD-UT-001',
+  brand: 'EcoClean',
   price: 189,
   safetyText: 'Zevní použití. Po každém použití dobře uzavřete. Skladujte v chladu a vyhněte se slunečnímu záření. Zabraňte kontaktu s očima. Nepoužívejte na klientky s alergií na některou složku přípravku. Uchovávejte mimo dosah dětí a zvířat.',
-  contactText: 'Spoko ČR s.r.o.\nIČO: 07996811\nPraha',
+  contactText: 'Distributor s.r.o.\nIČO: 07996811\nPraha',
   ean: '8594001230012',
 };
 
