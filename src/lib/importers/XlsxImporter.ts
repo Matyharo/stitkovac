@@ -1,0 +1,75 @@
+import { ProductImporter, ImportResult } from './ProductImporter';
+import * as XLSX from 'xlsx';
+
+export class XlsxImporter implements ProductImporter {
+  name = 'XLSX Importer';
+
+  async parse(file: File): Promise<ImportResult> {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = e.target?.result;
+          if (!data) {
+            resolve({ headers: [], rows: [], success: false, error: 'Nepodařilo se načíst obsah souboru.' });
+            return;
+          }
+
+          // Use SheetJS to read binary workbook
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          
+          if (!worksheet) {
+            resolve({ headers: [], rows: [], success: false, error: 'Soubor neobsahuje žádné listy.' });
+            return;
+          }
+
+          // Get raw rows
+          const rawRows = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+          
+          if (rawRows.length === 0) {
+            resolve({ headers: [], rows: [], success: true });
+            return;
+          }
+
+          // Read headers from first row
+          const headers = (rawRows[0] as any[]).map(h => String(h || '').trim()).filter(h => h.length > 0);
+          const rows: Record<string, string>[] = [];
+
+          for (let i = 1; i < rawRows.length; i++) {
+            const rawRow = rawRows[i];
+            if (!rawRow || rawRow.length === 0) continue;
+            
+            const row: Record<string, string> = {};
+            let hasData = false;
+            
+            headers.forEach((header, index) => {
+              const val = rawRow[index];
+              const stringVal = val !== undefined && val !== null ? String(val).trim() : '';
+              row[header] = stringVal;
+              if (stringVal) hasData = true;
+            });
+
+            if (hasData) {
+              rows.push(row);
+            }
+          }
+
+          resolve({ headers, rows, success: true });
+        } catch (err: any) {
+          resolve({
+            headers: [],
+            rows: [],
+            success: false,
+            error: err.message || 'Neočekávaná chyba při zpracování Excel souboru.',
+          });
+        }
+      };
+      reader.onerror = () => {
+        resolve({ headers: [], rows: [], success: false, error: 'Chyba při čtení souboru ze systému.' });
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+}

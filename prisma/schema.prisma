@@ -1,0 +1,55 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  sku         String   @unique
+  name        String
+  brand       String?
+  price       Float?
+  safetyText  String?
+  contactText String?
+  ean         String?
+  note        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model LabelTemplate {
+  id           String   @id @default(uuid())
+  name         String
+  fieldsConfig String   // JSON: visibilities of name, price, sku, ean, safetyText, contactText, brand
+  fontConfig   String   // JSON: font sizes (title, text, safety, price) and styling
+  layoutConfig String   // JSON: topMargin, leftMargin, horizontalGap, verticalGap, labelWidth, labelHeight (in mm)
+  sortOrder    Int      @default(0)
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model PrintJob {
+  id            String   @id @default(uuid())
+  products      String   // JSON: array of { productId, name, sku, price, quantity }
+  startPosition Int      // 1 to 21
+  createdAt     DateTime @default(now())
+}
+
+model ContactRule {
+  id           String   @id @default(uuid())
+  brandPattern String   // Text for matching brand. Empty for the default rule.
+  companyName  String
+  ico          String
+  address      String
+  website      String
+  safetyText   String?  // Výchozí nebo značkově specifický bezpečnostní text
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
