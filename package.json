@@ -1,6 +1,7 @@
 {
   "name": "stitkovac-app",
   "version": "0.1.0",
+  "author": "Ing. Matouš Ferstl",
   "private": true,
   "scripts": {
     "dev": "next dev",

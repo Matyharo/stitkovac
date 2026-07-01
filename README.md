@@ -97,3 +97,8 @@ Aplikace zpracovává výstupy z těchto importérů unifikovaně přes mapovac�
 
 ## Technická dokumentace
 Komplexní přehled o architektuře, databázovém schématu, kalibraci tiskových archů a rozšiřování aplikace naleznete v samostatném souboru [DOCUMENTATION.md](file:///c:/Users/ferst/Desktop/Stitkovac/DOCUMENTATION.md).
+
+---
+
+## Autor
+* **Ing. Matouš Ferstl**
