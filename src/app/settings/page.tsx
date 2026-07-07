@@ -824,61 +824,90 @@ export default function SettingsPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* User List */}
           <div className="lg:col-span-2 space-y-4">
-            <h4 className="font-bold text-sm text-slate-800 uppercase tracking-wider font-semibold">Uživatelé v systému</h4>
+            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider font-semibold">Uživatelé v systému</h4>
             {loadingUsers ? (
-              <div className="text-center py-6 text-xs text-slate-400">Načítání uživatelů...</div>
+              <div className="flex justify-center py-12">
+                <RefreshCw className="w-6 h-6 animate-spin text-indigo-500" />
+              </div>
             ) : (
-              <div className="border border-slate-100 rounded-xl divide-y divide-slate-100 overflow-hidden bg-slate-50/50">
-                {users.map((u) => (
-                  <div key={u.id} className="flex items-center justify-between p-4 bg-white hover:bg-slate-50 transition-colors">
-                    <div>
-                      <div className="font-semibold text-slate-800 text-sm flex items-center gap-2">
-                        {u.name}
-                        {u.role === 'admin' && (
-                          <span className="text-[10px] font-bold text-indigo-650 bg-indigo-50 px-2 py-0.5 rounded-full uppercase">
-                            Admin
-                          </span>
-                        )}
+              <div className="grid grid-cols-1 gap-3">
+                {users.map((u) => {
+                  // Get initials
+                  const initials = u.name
+                    .split(' ')
+                    .map((n: string) => n[0])
+                    .join('')
+                    .substring(0, 2)
+                    .toUpperCase();
+                  
+                  return (
+                    <div 
+                      key={u.id} 
+                      className="flex items-center justify-between p-4 bg-white border border-slate-100 hover:border-slate-200 rounded-2xl shadow-xs transition-all hover:shadow-sm"
+                    >
+                      <div className="flex items-center gap-3.5">
+                        {/* Letter Avatar */}
+                        <div className="w-10 h-10 rounded-xl bg-indigo-555/5 text-indigo-650 border border-indigo-500/10 flex items-center justify-center font-bold text-sm shadow-inner shrink-0 select-none">
+                          {initials || '?'}
+                        </div>
+                        
+                        <div>
+                          <div className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                            {u.name}
+                            {u.role === 'admin' && (
+                              <span className="text-[9px] font-extrabold text-indigo-650 bg-indigo-50/50 border border-indigo-500/15 px-2 py-0.5 rounded-lg uppercase tracking-wider">
+                                Administrátor
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-slate-500 font-medium mt-0.5">
+                            Uživatelské jméno: <span className="font-semibold text-slate-700">{u.username}</span>
+                          </div>
+                        </div>
                       </div>
-                      <div className="text-xs text-slate-500 font-medium">Uživatelské jméno: <span className="font-bold text-slate-700">{u.username}</span></div>
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setPasswordChangeModal({ isOpen: true, userId: u.id, username: u.username, newPassword: '' })}
-                        className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
-                        title="Změnit heslo"
-                      >
-                        <KeyRound className="w-4.5 h-4.5" />
-                      </button>
                       
-                      {u.username !== 'admin' && (
+                      <div className="flex items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => handleDeleteUserClick(u.id, u.username)}
-                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                          title="Smazat uživatele"
+                          onClick={() => setPasswordChangeModal({ isOpen: true, userId: u.id, username: u.username, newPassword: '' })}
+                          className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl border border-transparent hover:border-indigo-100 transition-all cursor-pointer"
+                          title="Změnit heslo"
                         >
-                          <Trash2 className="w-4.5 h-4.5" />
+                          <KeyRound className="w-4.5 h-4.5" />
                         </button>
-                      )}
+                        
+                        {u.username !== 'admin' && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteUserClick(u.id, u.username)}
+                            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl border border-transparent hover:border-rose-100 transition-all cursor-pointer"
+                            title="Smazat uživatele"
+                          >
+                            <Trash2 className="w-4.5 h-4.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
 
           {/* Add User Form */}
-          <div className="bg-slate-50/50 border border-slate-100 rounded-2xl p-5 space-y-4">
-            <h4 className="font-bold text-sm text-slate-800 uppercase tracking-wider flex items-center gap-1.5 font-semibold">
-              Vytvořit uživatele
-            </h4>
+          <div className="bg-slate-50/50 border border-slate-100 rounded-3xl p-6 space-y-5 h-fit">
+            <div className="border-b border-slate-100 pb-3">
+              <h4 className="font-bold text-xs text-slate-450 uppercase tracking-wider flex items-center gap-2">
+                <span className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+                  <User className="w-3.5 h-3.5" />
+                </span>
+                Vytvořit uživatele
+              </h4>
+            </div>
             
-            <form onSubmit={handleCreateUser} className="space-y-3">
+            <form onSubmit={handleCreateUser} className="space-y-4">
               <div>
-                <label className="block text-[11px] font-bold text-slate-550 uppercase tracking-wider mb-1">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
                   Celé jméno
                 </label>
                 <input
@@ -887,12 +916,12 @@ export default function SettingsPage() {
                   placeholder="Např: Jan Novák"
                   value={newUserForm.name}
                   onChange={(e) => setNewUserForm({ ...newUserForm, name: e.target.value })}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                  className="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/5 transition-all placeholder-slate-400 font-medium text-slate-700"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-550 uppercase tracking-wider mb-1">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
                   Uživatelské jméno
                 </label>
                 <input
@@ -901,12 +930,12 @@ export default function SettingsPage() {
                   placeholder="Např: novak"
                   value={newUserForm.username}
                   onChange={(e) => setNewUserForm({ ...newUserForm, username: e.target.value.toLowerCase().trim() })}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                  className="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/5 transition-all placeholder-slate-400 font-medium text-slate-700"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-550 uppercase tracking-wider mb-1">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
                   Heslo
                 </label>
                 <input
@@ -915,18 +944,18 @@ export default function SettingsPage() {
                   placeholder="Zadejte heslo"
                   value={newUserForm.password}
                   onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                  className="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/5 transition-all placeholder-slate-400 font-medium text-slate-700"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-550 uppercase tracking-wider mb-1">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
                   Role
                 </label>
                 <select
                   value={newUserForm.role}
                   onChange={(e) => setNewUserForm({ ...newUserForm, role: e.target.value })}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                  className="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/5 transition-all font-medium text-slate-700 cursor-pointer"
                 >
                   <option value="user">Uživatel</option>
                   <option value="admin">Administrátor</option>
@@ -936,7 +965,7 @@ export default function SettingsPage() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer mt-4"
+                className="w-full bg-indigo-600 hover:bg-indigo-550 active:bg-indigo-700 text-white font-bold py-3 rounded-xl text-xs transition-all shadow-md shadow-indigo-600/10 hover:shadow-lg hover:shadow-indigo-650/20 cursor-pointer mt-4 flex items-center justify-center gap-1.5"
               >
                 Vytvořit uživatele
               </button>
