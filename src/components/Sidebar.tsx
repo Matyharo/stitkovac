@@ -12,7 +12,8 @@ import {
   Settings,
   Tag,
   LogOut,
-  ScrollText
+  ScrollText,
+  User
 } from 'lucide-react';
 import { logout } from '@/app/actions';
 
@@ -97,10 +98,22 @@ export default function Sidebar({ currentUser }: SidebarProps) {
 
       {/* User profile */}
       {currentUser && (
-        <div className="px-4 pb-3">
-          <div className="px-4 py-3 bg-slate-800/40 border border-slate-800/80 rounded-xl text-xs flex flex-col gap-1">
-            <span className="font-semibold text-slate-200 truncate">{currentUser.name}</span>
-            <span className="text-[10px] text-slate-500 capitalize">{currentUser.role === 'admin' ? 'Administrátor' : 'Uživatel'}</span>
+        <div className="px-4 pb-3 select-none">
+          <div className="flex items-center gap-3 px-4 py-3 bg-slate-950/30 border border-slate-800 rounded-2xl">
+            {/* Avatar icon */}
+            <div className="w-8 h-8 rounded-xl bg-indigo-650/15 text-indigo-400 border border-indigo-500/15 flex items-center justify-center shrink-0 shadow-inner">
+              <User className="w-4 h-4" />
+            </div>
+            
+            {/* User Details */}
+            <div className="flex-1 min-w-0">
+              <div className="font-bold text-xs text-slate-200 truncate leading-tight">
+                {currentUser.name}
+              </div>
+              <div className="text-[10px] text-slate-500 font-medium truncate mt-0.5 capitalize">
+                {currentUser.role === 'admin' ? 'Administrátor' : 'Uživatel'}
+              </div>
+            </div>
           </div>
         </div>
       )}
