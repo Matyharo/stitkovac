@@ -52,7 +52,7 @@ graph TD
         *   [`CsvImporter.ts`](file:///c:/Users/ferst/Desktop/Stitkovac/src/lib/importers/CsvImporter.ts): Parser CSV souborů přes SheetJS.
         *   [`XlsxImporter.ts`](file:///c:/Users/ferst/Desktop/Stitkovac/src/lib/importers/XlsxImporter.ts): Parser Excel (`.xlsx`, `.xls`) souborů přes SheetJS.
         *   [`ShoptetApiImporter.ts`](file:///c:/Users/ferst/Desktop/Stitkovac/src/lib/importers/ShoptetApiImporter.ts): Příprava na synchronizaci dat přes e-shop API.
-*   **[`src/middleware.ts`](file:///c:/Users/ferst/Desktop/Stitkovac/src/middleware.ts)**: Zabezpečení stránek (kontrola session cookie a přesměrování na `/login`).
+*   **[`src/proxy.ts`](file:///c:/Users/ferst/Desktop/Stitkovac/src/proxy.ts)**: Zabezpečení stránek (kontrola session cookie a přesměrování na `/login`).
 
 ---
 
@@ -63,9 +63,9 @@ V kořenovém adresáři se nachází `.env` s následujícími proměnnými:
 *   `DATABASE_URL="file:./dev.db"`: Cesta k SQLite databázi.
 *   `ADMIN_PASSWORD="vaše_heslo"`: Heslo pro přihlášení do administračního rozhraní aplikace.
 
-### 2.2. Autentizační Middleware
-Bezpečnost zajišťuje [`src/middleware.ts`](file:///c:/Users/ferst/Desktop/Stitkovac/src/middleware.ts).
-1.  Při přístupu na jakoukoliv podstránku (vyjma `/login` a statických souborů) middleware zkontroluje existenci cookie `auth_session`.
+### 2.2. Autentizační Proxy
+Bezpečnost zajišťuje [`src/proxy.ts`](file:///c:/Users/ferst/Desktop/Stitkovac/src/proxy.ts).
+1.  Při přístupu na jakoukoliv podstránku (vyjma `/login` a statických souborů) proxy zkontroluje existenci cookie `auth_session`.
 2.  Pokud cookie chybí nebo je neplatná, uživatel je okamžitě přesměrován na `/login`.
 3.  Přihlašovací formulář odesílá heslo na Server Action, která jej porovná s `ADMIN_PASSWORD`. Při úspěchu uloží session cookie se 7denní platností.
 

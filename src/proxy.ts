@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname;
 
   // Kontrola přítomnosti relační cookie
@@ -32,7 +32,7 @@ export function middleware(req: NextRequest) {
 export const config = {
   matcher: [
     /*
-     * Matcher filtruje statické soubory, roboty a faviconu, aby na ně middleware nereagoval
+     * Matcher filtruje statické soubory, roboty a faviconu, aby na ně proxy nereagoval
      */
     '/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)',
   ],

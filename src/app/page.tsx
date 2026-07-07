@@ -377,7 +377,7 @@ export default async function DashboardPage() {
           {/* Label Specs Information */}
           <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
             <h3 className="font-bold text-sm text-slate-900 uppercase tracking-wider mb-4">
-              Specifikace etiket
+              Specifikace výchozích etiket
             </h3>
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs pb-2.5 border-b border-slate-50">
