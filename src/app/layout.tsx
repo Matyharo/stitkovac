@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import Sidebar from '@/components/Sidebar';
+import { cookies } from 'next/headers';
 import './globals.css';
 
 const inter = Inter({
@@ -14,15 +15,29 @@ export const metadata: Metadata = {
   authors: [{ name: 'Ing. Matouš Ferstl' }],
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const cookieStore = await cookies();
+  const authSession = cookieStore.get('auth_session')?.value;
+  let currentUser = null;
+  if (authSession) {
+    try {
+      currentUser = JSON.parse(authSession);
+    } catch {
+      // Zpětná kompatibilita se starou session cookie
+      if (authSession === 'authenticated_true') {
+        currentUser = { username: 'admin', name: 'Administrátor', role: 'admin' };
+      }
+    }
+  }
+
   return (
     <html lang="cs" className={`${inter.variable} h-full antialiased`} suppressHydrationWarning>
       <body className="h-full overflow-hidden flex bg-slate-50 text-slate-900 font-sans">
-        <Sidebar />
+        <Sidebar currentUser={currentUser} />
         <main className="flex-1 flex flex-col min-w-0 overflow-y-auto bg-slate-50/50">
           {children}
         </main>

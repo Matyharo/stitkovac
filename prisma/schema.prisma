@@ -53,3 +53,21 @@ model ContactRule {
   updatedAt    DateTime @updatedAt
 }
 
+model User {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  passwordHash String
+  name         String
+  role         String   @default("user") // "admin" | "user"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  username  String   // Uživatelské jméno osoby, která akci provedla
+  action    String   // Např. "LOGIN", "PRODUCT_CREATE", "PRODUCT_UPDATE", "PRODUCT_DELETE", "PRINT_JOB_CREATE", "TEMPLATE_SAVE"
+  details   String   // Podrobnosti o změně
+  createdAt DateTime @default(now())
+}
+

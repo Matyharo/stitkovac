@@ -11,11 +11,20 @@ import {
   Palette,
   Settings,
   Tag,
-  LogOut
+  LogOut,
+  ScrollText
 } from 'lucide-react';
 import { logout } from '@/app/actions';
 
-export default function Sidebar() {
+interface SidebarProps {
+  currentUser?: {
+    username: string;
+    name: string;
+    role: string;
+  } | null;
+}
+
+export default function Sidebar({ currentUser }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -39,6 +48,7 @@ export default function Sidebar() {
     { name: 'Správa produktů', href: '/products', icon: Package },
     { name: 'Tisk štítků', href: '/print', icon: Printer },
     { name: 'Šablony vzhledu', href: '/templates', icon: Palette },
+    { name: 'Historie aktivit', href: '/logs', icon: ScrollText },
     { name: 'Nastavení', href: '/settings', icon: Settings },
   ];
 
@@ -84,6 +94,16 @@ export default function Sidebar() {
           );
         })}
       </nav>
+
+      {/* User profile */}
+      {currentUser && (
+        <div className="px-4 pb-3">
+          <div className="px-4 py-3 bg-slate-800/40 border border-slate-800/80 rounded-xl text-xs flex flex-col gap-1">
+            <span className="font-semibold text-slate-200 truncate">{currentUser.name}</span>
+            <span className="text-[10px] text-slate-500 capitalize">{currentUser.role === 'admin' ? 'Administrátor' : 'Uživatel'}</span>
+          </div>
+        </div>
+      )}
 
       {/* Logout Button */}
       <div className="px-4 pb-4">

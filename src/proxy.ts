@@ -5,7 +5,20 @@ export function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname;
 
   // Kontrola přítomnosti relační cookie
-  const isAuthenticated = req.cookies.get('auth_session')?.value === 'authenticated_true';
+  const authSession = req.cookies.get('auth_session')?.value;
+  let isAuthenticated = false;
+  if (authSession) {
+    try {
+      const decoded = JSON.parse(authSession);
+      if (decoded && decoded.username) {
+        isAuthenticated = true;
+      }
+    } catch {
+      if (authSession === 'authenticated_true') {
+        isAuthenticated = true;
+      }
+    }
+  }
 
   // Pokud jde o přihlašovací stránku
   if (path === '/login') {

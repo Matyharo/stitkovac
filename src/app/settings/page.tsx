@@ -10,7 +10,11 @@ import {
   deleteContactRule,
   applyContactRulesToAllProducts,
   getProductIds,
-  applyContactRulesToBatch
+  applyContactRulesToBatch,
+  getUsers,
+  createUser,
+  deleteUser,
+  changeUserPassword
 } from '@/app/actions';
 import {
   Settings,
@@ -28,7 +32,8 @@ import {
   Play,
   Pencil,
   PlusCircle,
-  FileSpreadsheet
+  FileSpreadsheet,
+  User
 } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -67,6 +72,12 @@ export default function SettingsPage() {
   const [brandOverrides, setBrandOverrides] = useState<any[]>([]);
   const [loadingRules, setLoadingRules] = useState(true);
 
+  // User Management State
+  const [users, setUsers] = useState<any[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [newUserForm, setNewUserForm] = useState({ username: '', password: '', name: '', role: 'user' });
+  const [passwordChangeModal, setPasswordChangeModal] = useState<{ isOpen: boolean; userId: string; username: string; newPassword: string } | null>(null);
+
   // Forms for contact rules
   const [defaultForm, setDefaultForm] = useState({
     companyName: '',
@@ -86,6 +97,18 @@ export default function SettingsPage() {
     website: '',
     safetyText: ''
   });
+
+  const loadUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const data = await getUsers();
+      setUsers(data);
+    } catch (err) {
+      console.error('Error loading users:', err);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
 
   const loadRules = async () => {
     setLoadingRules(true);
@@ -116,6 +139,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     loadRules();
+    loadUsers();
   }, []);
 
   const handleSaveDefault = async (e: React.FormEvent) => {
@@ -325,6 +349,76 @@ export default function SettingsPage() {
       }
     } catch (err: any) {
       setError(err.message || 'Chyba při nahrávání ukázkových dat.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    setLoading(true);
+    try {
+      const res = await createUser(newUserForm);
+      if (res.success) {
+        setSuccess(`Uživatel "${newUserForm.username}" byl úspěšně vytvořen.`);
+        setNewUserForm({ username: '', password: '', name: '', role: 'user' });
+        loadUsers();
+      } else {
+        throw new Error(res.error);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Nepodařilo se vytvořit uživatele.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteUserClick = (id: string, username: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Smazat uživatelský účet?',
+      message: `Opravdu chcete smazat uživatele "${username}"? Tento uživatel ztratí přístup k aplikaci.`,
+      isDanger: true,
+      onConfirm: async () => {
+        setError(null);
+        setSuccess(null);
+        setLoading(true);
+        try {
+          const res = await deleteUser(id);
+          if (res.success) {
+            setSuccess(`Uživatel "${username}" byl smazán.`);
+            loadUsers();
+          } else {
+            throw new Error(res.error);
+          }
+        } catch (err: any) {
+          setError(err.message || 'Nepodařilo se smazat uživatele.');
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
+  };
+
+  const handleSaveNewPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwordChangeModal || !passwordChangeModal.newPassword.trim()) return;
+
+    setError(null);
+    setSuccess(null);
+    setLoading(true);
+    try {
+      const res = await changeUserPassword(passwordChangeModal.userId, passwordChangeModal.newPassword);
+      if (res.success) {
+        setSuccess(`Heslo pro uživatele "${passwordChangeModal.username}" bylo úspěšně změněno.`);
+        setPasswordChangeModal(null);
+      } else {
+        throw new Error(res.error);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Nepodařilo se změnit heslo.');
     } finally {
       setLoading(false);
     }
@@ -714,6 +808,188 @@ export default function SettingsPage() {
           </div>
         )}
       </div>
+
+      {/* 2. USER MANAGEMENT */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 space-y-6">
+        <div>
+          <h3 className="font-bold text-lg text-slate-900 flex items-center gap-2">
+            <User className="w-5 h-5 text-indigo-500" />
+            Správa uživatelských účtů
+          </h3>
+          <p className="text-xs text-slate-500 mt-1">
+            Vytvářejte a spravujte uživatelské účty pro přístup do systému.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* User List */}
+          <div className="lg:col-span-2 space-y-4">
+            <h4 className="font-bold text-sm text-slate-800 uppercase tracking-wider font-semibold">Uživatelé v systému</h4>
+            {loadingUsers ? (
+              <div className="text-center py-6 text-xs text-slate-400">Načítání uživatelů...</div>
+            ) : (
+              <div className="border border-slate-100 rounded-xl divide-y divide-slate-100 overflow-hidden bg-slate-50/50">
+                {users.map((u) => (
+                  <div key={u.id} className="flex items-center justify-between p-4 bg-white hover:bg-slate-50 transition-colors">
+                    <div>
+                      <div className="font-semibold text-slate-800 text-sm flex items-center gap-2">
+                        {u.name}
+                        {u.role === 'admin' && (
+                          <span className="text-[10px] font-bold text-indigo-650 bg-indigo-50 px-2 py-0.5 rounded-full uppercase">
+                            Admin
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-slate-500 font-medium">Uživatelské jméno: <span className="font-bold text-slate-700">{u.username}</span></div>
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPasswordChangeModal({ isOpen: true, userId: u.id, username: u.username, newPassword: '' })}
+                        className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                        title="Změnit heslo"
+                      >
+                        <KeyRound className="w-4.5 h-4.5" />
+                      </button>
+                      
+                      {u.username !== 'admin' && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteUserClick(u.id, u.username)}
+                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                          title="Smazat uživatele"
+                        >
+                          <Trash2 className="w-4.5 h-4.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Add User Form */}
+          <div className="bg-slate-50/50 border border-slate-100 rounded-2xl p-5 space-y-4">
+            <h4 className="font-bold text-sm text-slate-800 uppercase tracking-wider flex items-center gap-1.5 font-semibold">
+              Vytvořit uživatele
+            </h4>
+            
+            <form onSubmit={handleCreateUser} className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-550 uppercase tracking-wider mb-1">
+                  Celé jméno
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Např: Jan Novák"
+                  value={newUserForm.name}
+                  onChange={(e) => setNewUserForm({ ...newUserForm, name: e.target.value })}
+                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-550 uppercase tracking-wider mb-1">
+                  Uživatelské jméno
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Např: novak"
+                  value={newUserForm.username}
+                  onChange={(e) => setNewUserForm({ ...newUserForm, username: e.target.value.toLowerCase().trim() })}
+                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-550 uppercase tracking-wider mb-1">
+                  Heslo
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Zadejte heslo"
+                  value={newUserForm.password}
+                  onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })}
+                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-550 uppercase tracking-wider mb-1">
+                  Role
+                </label>
+                <select
+                  value={newUserForm.role}
+                  onChange={(e) => setNewUserForm({ ...newUserForm, role: e.target.value })}
+                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                >
+                  <option value="user">Uživatel</option>
+                  <option value="admin">Administrátor</option>
+                </select>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer mt-4"
+              >
+                Vytvořit uživatele
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      {/* PASSWORD CHANGE MODAL */}
+      {passwordChangeModal && passwordChangeModal.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl p-6 border border-slate-100 animate-in zoom-in-95 duration-200 text-slate-800">
+            <div className="flex items-center gap-3 mb-4 text-indigo-600">
+              <KeyRound className="w-6 h-6 shrink-0" />
+              <h3 className="font-bold text-lg">Změnit heslo pro {passwordChangeModal.username}</h3>
+            </div>
+            
+            <form onSubmit={handleSaveNewPassword} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Nové heslo
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Zadejte nové heslo"
+                  value={passwordChangeModal.newPassword}
+                  onChange={(e) => setPasswordChangeModal({ ...passwordChangeModal, newPassword: e.target.value })}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setPasswordChangeModal(null)}
+                  className="text-sm font-semibold text-slate-500 px-4 py-2 hover:bg-slate-50 border border-slate-200 rounded-xl transition-colors cursor-pointer"
+                >
+                  Storno
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold px-5 py-2 rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  {loading && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  Uložit heslo
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Settings Grid (Shoptet API & SQLite) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">

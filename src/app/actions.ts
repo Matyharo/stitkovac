@@ -4,6 +4,53 @@
 import { prisma } from '@/lib/db';
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
+import crypto from 'crypto';
+
+// --- AUTH UTILS ---
+export async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+  return `${salt}:${hash}`;
+}
+
+export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  const parts = storedHash.split(':');
+  if (parts.length !== 2) return false;
+  const [salt, hash] = parts;
+  const verifyHash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+  return verifyHash === hash;
+}
+
+export async function logActivity(action: string, details: string) {
+  try {
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get('auth_session')?.value;
+    let username = 'neznámý';
+
+    if (sessionCookie) {
+      try {
+        const decoded = JSON.parse(sessionCookie);
+        if (decoded.username) {
+          username = decoded.username;
+        }
+      } catch {
+        if (sessionCookie === 'authenticated_true') {
+          username = 'admin';
+        }
+      }
+    }
+
+    await prisma.activityLog.create({
+      data: {
+        username,
+        action,
+        details,
+      },
+    });
+  } catch (error) {
+    console.error('Failed to log activity:', error);
+  }
+}
 
 // --- PRODUCTS ACTIONS ---
 
@@ -71,6 +118,7 @@ export async function updateProduct(id: string, data: {
         safetyText,
       },
     });
+    await logActivity('PRODUCT_UPDATE', `Upraven produkt SKU: ${updated.sku} (Název: ${updated.name})`);
     revalidatePath('/products');
     revalidatePath('/');
     return { success: true, product: updated };
@@ -82,9 +130,15 @@ export async function updateProduct(id: string, data: {
 
 export async function deleteProduct(id: string) {
   try {
+    const product = await prisma.product.findUnique({ where: { id } });
     await prisma.product.delete({
       where: { id },
     });
+    if (product) {
+      await logActivity('PRODUCT_DELETE', `Smazán produkt SKU: ${product.sku} (Název: ${product.name})`);
+    } else {
+      await logActivity('PRODUCT_DELETE', `Smazán produkt ID: ${id}`);
+    }
     revalidatePath('/products');
     revalidatePath('/');
     return { success: true };
@@ -96,11 +150,14 @@ export async function deleteProduct(id: string) {
 
 export async function deleteProducts(ids: string[]) {
   try {
+    const products = await prisma.product.findMany({ where: { id: { in: ids } } });
     await prisma.product.deleteMany({
       where: {
         id: { in: ids },
       },
     });
+    const skus = products.map(p => p.sku).join(', ');
+    await logActivity('PRODUCT_DELETE_MANY', `Hromadně smazány produkty SKU: ${skus}`);
     revalidatePath('/products');
     revalidatePath('/');
     return { success: true };
@@ -137,6 +194,7 @@ export async function createProduct(data: {
         safetyText,
       },
     });
+    await logActivity('PRODUCT_CREATE', `Vytvořen produkt SKU: ${created.sku} (Název: ${created.name})`);
     revalidatePath('/products');
     revalidatePath('/');
     return { success: true, product: created };
@@ -295,6 +353,7 @@ export async function saveImportedProducts(
       }
     }
 
+    await logActivity('PRODUCT_IMPORT', `Importováno/aktualizováno ${importedCount + updatedCount} produktů (Nové: ${importedCount}, Upravené: ${updatedCount})`);
     revalidatePath('/products');
     revalidatePath('/');
     return { success: true, importedCount, updatedCount };
@@ -307,6 +366,7 @@ export async function saveImportedProducts(
 export async function clearAllProducts() {
   try {
     await prisma.product.deleteMany({});
+    await logActivity('PRODUCT_CLEAR_ALL', 'Smazána celá databáze produktů');
     revalidatePath('/products');
     revalidatePath('/');
     return { success: true };
@@ -466,7 +526,10 @@ export async function saveTemplate(
     const layoutStr = JSON.stringify(layoutConfig);
 
     let template;
+    let actionType = 'TEMPLATE_CREATE';
+    let detailMsg = '';
     if (id) {
+      actionType = 'TEMPLATE_UPDATE';
       template = await prisma.labelTemplate.update({
         where: { id },
         data: {
@@ -476,6 +539,7 @@ export async function saveTemplate(
           layoutConfig: layoutStr,
         },
       });
+      detailMsg = `Upravena šablona: ${name}`;
     } else {
       template = await prisma.labelTemplate.create({
         data: {
@@ -485,8 +549,10 @@ export async function saveTemplate(
           layoutConfig: layoutStr,
         },
       });
+      detailMsg = `Vytvořena šablona: ${name}`;
     }
 
+    await logActivity(actionType, detailMsg);
     revalidatePath('/templates');
     revalidatePath('/print');
     revalidatePath('/');
@@ -499,9 +565,13 @@ export async function saveTemplate(
 
 export async function deleteTemplate(id: string) {
   try {
+    const template = await prisma.labelTemplate.findUnique({ where: { id } });
     await prisma.labelTemplate.delete({
       where: { id },
     });
+    if (template) {
+      await logActivity('TEMPLATE_DELETE', `Smazána šablona: ${template.name}`);
+    }
     revalidatePath('/templates');
     revalidatePath('/print');
     revalidatePath('/');
@@ -530,6 +600,7 @@ export async function duplicateTemplate(id: string) {
       },
     });
 
+    await logActivity('TEMPLATE_DUPLICATE', `Duplikována šablona ${original.name} jako ${duplicated.name}`);
     revalidatePath('/templates');
     revalidatePath('/print');
     revalidatePath('/');
@@ -606,6 +677,8 @@ export async function savePrintJob(
         startPosition,
       },
     });
+    const totalQty = products.reduce((sum, p) => sum + p.quantity, 0);
+    await logActivity('PRINT_JOB_CREATE', `Vytištěno ${totalQty} etiket, počáteční pozice: ${startPosition}`);
     revalidatePath('/');
     return { success: true, job };
   } catch (error: any) {
@@ -839,6 +912,7 @@ export async function saveContactRule(data: {
           safetyText: data.safetyText || null,
         }
       });
+      await logActivity('RULE_UPDATE', `Upraveno pravidlo pro značku: ${data.brandPattern || 'výchozí'}`);
       revalidatePath('/settings');
       return { success: true, rule: updated };
     } else {
@@ -853,6 +927,7 @@ export async function saveContactRule(data: {
           isDefault: data.isDefault || false
         }
       });
+      await logActivity('RULE_CREATE', `Vytvořeno pravidlo pro značku: ${data.brandPattern || 'výchozí'}`);
       revalidatePath('/settings');
       return { success: true, rule: created };
     }
@@ -872,6 +947,7 @@ export async function deleteContactRule(id: string) {
       return { success: false, error: 'Výchozí pravidlo nelze smazat.' };
     }
     await prisma.contactRule.delete({ where: { id } });
+    await logActivity('RULE_DELETE', `Smazáno pravidlo pro značku: ${rule.brandPattern || 'výchozí'}`);
     revalidatePath('/settings');
     return { success: true };
   } catch (error: any) {
@@ -1148,18 +1224,58 @@ export async function analyzeImportedProducts(products: ImportProductInput[]) {
 
 export async function login(username: string, password: string) {
   try {
-    const expectedUsername = process.env.BASIC_AUTH_USER || 'admin';
-    const expectedPassword = process.env.BASIC_AUTH_PASSWORD || 'stitkovac2026';
+    // Normalizace stávajících uživatelských jmen v DB na malá písmena
+    const allUsers = await prisma.user.findMany();
+    for (const u of allUsers) {
+      if (u.username !== u.username.toLowerCase()) {
+        try {
+          await prisma.user.update({
+            where: { id: u.id },
+            data: { username: u.username.toLowerCase() },
+          });
+        } catch (e) {
+          console.error(`Failed to normalize username for ${u.username}`, e);
+        }
+      }
+    }
 
-    if (username === expectedUsername && password === expectedPassword) {
+    // Auto-seed default admin if table is empty
+    const userCount = await prisma.user.count();
+    if (userCount === 0) {
+      const defaultUsername = (process.env.BASIC_AUTH_USER || 'admin').toLowerCase().trim();
+      const defaultPassword = process.env.BASIC_AUTH_PASSWORD || 'stitkovac2026';
+      const hashed = await hashPassword(defaultPassword);
+      await prisma.user.create({
+        data: {
+          username: defaultUsername,
+          passwordHash: hashed,
+          name: 'Administrátor',
+          role: 'admin',
+        },
+      });
+    }
+
+    const normalizedUsername = username.toLowerCase().trim();
+    const user = await prisma.user.findUnique({
+      where: { username: normalizedUsername },
+    });
+
+    if (user && await verifyPassword(password, user.passwordHash)) {
       const cookieStore = await cookies();
-      cookieStore.set('auth_session', 'authenticated_true', {
+      const sessionData = {
+        username: user.username,
+        name: user.name,
+        role: user.role,
+      };
+      cookieStore.set('auth_session', JSON.stringify(sessionData), {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'strict',
         maxAge: 60 * 60 * 24 * 30, // 30 days
         path: '/',
       });
+
+      await logActivity('LOGIN', `Uživatel se úspěšně přihlásil: ${user.username} (${user.name})`);
       return { success: true };
     }
 
@@ -1172,6 +1288,7 @@ export async function login(username: string, password: string) {
 
 export async function logout() {
   try {
+    await logActivity('LOGOUT', 'Uživatel se odhlásil');
     const cookieStore = await cookies();
     cookieStore.delete('auth_session');
     return { success: true };
@@ -1180,5 +1297,118 @@ export async function logout() {
     return { success: false, error: 'Chyba při odhlašování.' };
   }
 }
+
+export async function getActivityLogs(page: number = 1, limit: number = 50, search?: string) {
+  try {
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+    if (search && search.trim() !== '') {
+      const term = search.trim();
+      where.OR = [
+        { username: { contains: term } },
+        { action: { contains: term } },
+        { details: { contains: term } },
+      ];
+    }
+
+    const [logs, total] = await Promise.all([
+      prisma.activityLog.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.activityLog.count({ where }),
+    ]);
+
+    return {
+      success: true,
+      logs,
+      total,
+      totalPages: Math.ceil(total / limit),
+    };
+  } catch (error: any) {
+    console.error('Error fetching activity logs:', error);
+    return { success: false, logs: [], total: 0, totalPages: 0, error: error.message };
+  }
+}
+
+export async function getUsers() {
+  try {
+    const users = await prisma.user.findMany({
+      orderBy: { username: 'asc' },
+    });
+    return users.map(u => ({ id: u.id, username: u.username, name: u.name, role: u.role, createdAt: u.createdAt }));
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    return [];
+  }
+}
+
+export async function createUser(data: { username: string; password: string; name: string; role?: string }) {
+  try {
+    const existing = await prisma.user.findUnique({
+      where: { username: data.username },
+    });
+    if (existing) {
+      return { success: false, error: 'Uživatelské jméno již existuje.' };
+    }
+
+    const passwordHash = await hashPassword(data.password);
+    await prisma.user.create({
+      data: {
+        username: data.username,
+        passwordHash,
+        name: data.name,
+        role: data.role || 'user',
+      },
+    });
+
+    await logActivity('USER_CREATE', `Vytvořen nový uživatel: ${data.username} (${data.name})`);
+    return { success: true };
+  } catch (error: any) {
+    console.error('Error creating user:', error);
+    return { success: false, error: error.message || 'Nepodařilo se vytvořit uživatele.' };
+  }
+}
+
+export async function deleteUser(id: string) {
+  try {
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) return { success: false, error: 'Uživatel nenalezen.' };
+
+    if (user.username === 'admin') {
+      return { success: false, error: 'Hlavního administrátora "admin" nelze smazat.' };
+    }
+
+    await prisma.user.delete({ where: { id } });
+    await logActivity('USER_DELETE', `Smazán uživatel: ${user.username}`);
+    return { success: true };
+  } catch (error: any) {
+    console.error('Error deleting user:', error);
+    return { success: false, error: error.message || 'Nepodařilo se smazat uživatele.' };
+  }
+}
+
+export async function changeUserPassword(id: string, newPassword: string) {
+  try {
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) return { success: false, error: 'Uživatel nenalezen.' };
+
+    const passwordHash = await hashPassword(newPassword);
+    await prisma.user.update({
+      where: { id },
+      data: { passwordHash },
+    });
+
+    await logActivity('USER_PASSWORD_CHANGE', `Změněno heslo pro uživatele: ${user.username}`);
+    return { success: true };
+  } catch (error: any) {
+    console.error('Error changing password:', error);
+    return { success: false, error: error.message || 'Nepodařilo se změnit heslo.' };
+  }
+}
+
 
 
