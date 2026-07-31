@@ -35,6 +35,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const totalPages = Math.max(1, Math.ceil(printJobCount / pageSize));
   const currentPage = Math.min(Math.max(1, isNaN(pageParam) ? 1 : pageParam), totalPages);
   const skip = (currentPage - 1) * pageSize;
+  const itemStart = printJobCount === 0 ? 0 : skip + 1;
+  const itemEnd = Math.min(skip + pageSize, printJobCount);
 
   const recentJobs = await prisma.printJob.findMany({
     orderBy: { createdAt: 'desc' },
@@ -209,7 +211,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               </h2>
               {recentJobs.length > 0 && (
                 <span className="text-xs font-semibold px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-100/60">
-                  Zobrazeno {recentJobs.length} z {printJobCount}
+                  Zobrazeno {itemStart}–{itemEnd} z {printJobCount}
                 </span>
               )}
             </div>
@@ -293,7 +295,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                 {currentPage > 1 ? (
                   <Link
                     href={`/?page=${currentPage - 1}`}
-                    className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors"
+                    className="w-28 inline-flex items-center justify-center gap-1 text-xs font-semibold py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors"
                   >
                     <ChevronLeft className="w-4 h-4" />
                     Předchozí
@@ -301,7 +303,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                 ) : (
                   <button
                     disabled
-                    className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 bg-slate-50 text-slate-300 rounded-lg cursor-not-allowed"
+                    className="w-28 inline-flex items-center justify-center gap-1 text-xs font-semibold py-2 bg-slate-50 text-slate-300 rounded-lg cursor-not-allowed"
                   >
                     <ChevronLeft className="w-4 h-4" />
                     Předchozí
@@ -311,7 +313,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                 {currentPage < totalPages ? (
                   <Link
                     href={`/?page=${currentPage + 1}`}
-                    className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors"
+                    className="w-28 inline-flex items-center justify-center gap-1 text-xs font-semibold py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors"
                   >
                     Další
                     <ChevronRight className="w-4 h-4" />
@@ -319,7 +321,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                 ) : (
                   <button
                     disabled
-                    className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 bg-slate-50 text-slate-300 rounded-lg cursor-not-allowed"
+                    className="w-28 inline-flex items-center justify-center gap-1 text-xs font-semibold py-2 bg-slate-50 text-slate-300 rounded-lg cursor-not-allowed"
                   >
                     Další
                     <ChevronRight className="w-4 h-4" />
