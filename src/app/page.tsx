@@ -11,19 +11,35 @@ import {
   Clock,
   ArrowRight,
   AlertCircle,
-  RefreshCw
+  RefreshCw,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 export const revalidate = 0; // Disable caching so dashboard is always fresh
 
-export default async function DashboardPage() {
+interface PageProps {
+  searchParams: Promise<{ page?: string }>;
+}
+
+export default async function DashboardPage({ searchParams }: PageProps) {
+  const resolvedParams = await searchParams;
+  const pageParam = parseInt(resolvedParams?.page || '1', 10);
+  const pageSize = 10;
+
   // Fetch statistics
   const productCount = await prisma.product.count();
   const templateCount = await prisma.labelTemplate.count();
   const printJobCount = await prisma.printJob.count();
+
+  const totalPages = Math.max(1, Math.ceil(printJobCount / pageSize));
+  const currentPage = Math.min(Math.max(1, isNaN(pageParam) ? 1 : pageParam), totalPages);
+  const skip = (currentPage - 1) * pageSize;
+
   const recentJobs = await prisma.printJob.findMany({
     orderBy: { createdAt: 'desc' },
-    take: 15,
+    skip,
+    take: pageSize,
   });
 
   // Database health stats
@@ -265,6 +281,53 @@ export default async function DashboardPage() {
             </div>
           )}
           </div>
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between">
+              <div className="text-xs text-slate-500 font-medium">
+                Strana <span className="font-bold text-slate-800">{currentPage}</span> z{' '}
+                <span className="font-bold text-slate-800">{totalPages}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {currentPage > 1 ? (
+                  <Link
+                    href={`/?page=${currentPage - 1}`}
+                    className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    Předchozí
+                  </Link>
+                ) : (
+                  <button
+                    disabled
+                    className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 bg-slate-50 text-slate-300 rounded-lg cursor-not-allowed"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    Předchozí
+                  </button>
+                )}
+
+                {currentPage < totalPages ? (
+                  <Link
+                    href={`/?page=${currentPage + 1}`}
+                    className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors"
+                  >
+                    Další
+                    <ChevronRight className="w-4 h-4" />
+                  </Link>
+                ) : (
+                  <button
+                    disabled
+                    className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 bg-slate-50 text-slate-300 rounded-lg cursor-not-allowed"
+                  >
+                    Další
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right Col: Quick Guidance / Tools (1/3 width) */}
