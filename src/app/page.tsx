@@ -23,7 +23,7 @@ export default async function DashboardPage() {
   const printJobCount = await prisma.printJob.count();
   const recentJobs = await prisma.printJob.findMany({
     orderBy: { createdAt: 'desc' },
-    take: 5,
+    take: 15,
   });
 
   // Database health stats
@@ -184,25 +184,33 @@ export default async function DashboardPage() {
       {/* Main Grid: Quick Actions & Print History */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Col: Recent Print Jobs (2/3 width) */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
-          <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-            <Clock className="w-5 h-5 text-indigo-500" />
-            Historie posledních tisků
-          </h2>
-
-          {recentJobs.length === 0 ? (
-            <div className="text-center py-12 border border-dashed border-slate-200 rounded-xl">
-              <Printer className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-              <p className="text-sm text-slate-500">Zatím nebyly vygenerovány žádné štítky.</p>
-              <Link
-                href="/print"
-                className="mt-3 inline-block text-xs font-semibold text-indigo-600 hover:underline"
-              >
-                Vytvořit první tiskový arch
-              </Link>
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-100 shadow-sm p-6 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Clock className="w-5 h-5 text-indigo-500" />
+                Historie posledních tisků
+              </h2>
+              {recentJobs.length > 0 && (
+                <span className="text-xs font-semibold px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-100/60">
+                  Zobrazeno {recentJobs.length} z {printJobCount}
+                </span>
+              )}
             </div>
-          ) : (
-            <div className="divide-y divide-slate-100">
+
+            {recentJobs.length === 0 ? (
+              <div className="text-center py-12 border border-dashed border-slate-200 rounded-xl">
+                <Printer className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                <p className="text-sm text-slate-500">Zatím nebyly vygenerovány žádné štítky.</p>
+                <Link
+                  href="/print"
+                  className="mt-3 inline-block text-xs font-semibold text-indigo-600 hover:underline"
+                >
+                  Vytvořit první tiskový arch
+                </Link>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100 max-h-[850px] overflow-y-auto pr-1">
               {recentJobs.map((job) => {
                 const jobProducts = JSON.parse(job.products) as {
                   name: string;
@@ -256,6 +264,7 @@ export default async function DashboardPage() {
               })}
             </div>
           )}
+          </div>
         </div>
 
         {/* Right Col: Quick Guidance / Tools (1/3 width) */}
