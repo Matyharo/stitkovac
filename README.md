@@ -43,9 +43,32 @@ Tradiční nástroje pro tisk etiket často trpí nepřesným posunem tiskárny 
 | **Datový Import** | **SheetJS (xlsx)** | Parsování `.csv`, `.xlsx` a `.xls` souborů |
 | **Testování & CI/CD** | **Vitest & GitHub Actions** | Automatizovaný ucelený pipeline (lint, tsc, tests, build) |
 
----
-
 ## 🌟 Klíčové Funkce & Architektura
+
+```mermaid
+flowchart TD
+    subgraph ImportLayer ["Datová Vrstva (Import)"]
+        A1[CSV Soubory] --> IMP[ProductImporter Strategy]
+        A2[XLSX / XLS Excel] --> IMP
+        A3[Shoptet REST API] --> IMP
+        IMP --> HEUR[Fuzzy Auto-Mapping findBestHeader]
+    end
+
+    subgraph CoreEngine ["Aplikační Jádro"]
+        HEUR --> DB[(SQLite Database / Prisma ORM)]
+        DB --> CAT[Správa Katalogu & Uživatelů]
+        DB --> TPL[Správa Šablon & Kalibrace]
+    end
+
+    subgraph PDFEngine ["Tiskový & PDF Engine"]
+        CAT --> RENDER[pdf-lib PDF Generator]
+        TPL --> RENDER
+        POS[Startovní Pozice 1-21] --> RENDER
+        RENDER --> PDF[A4 PDF Vector Document 3x7 Grid]
+    end
+
+    PDF --> PRINT[🖨️ Přímý Tisk na Avery L7160 100% Měřítko]
+```
 
 ### 1. 🖨️ Generátor PDF & Tiskový Layout (`src/lib/pdfGenerator.ts`)
 - Vektorové generování PDF dokumentů v reálném čase s přesností na bod (`pt` / `mm`).
@@ -83,10 +106,11 @@ cd stitkovac
 npm install
 ```
 
-### 3. Příprava databáze
-Vytvořte SQLite databázi a spusťte migrace Prisma:
+### 3. Příprava a naplnění databáze (Seeding)
+Vytvořte SQLite databázi, pusťte migrace a nahrajte testovací data:
 ```bash
 npx prisma db push
+npx prisma db seed
 ```
 
 ### 4. Spuštění vývojového serveru
