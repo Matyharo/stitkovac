@@ -38,7 +38,7 @@ Tradiční nástroje pro tisk etiket často trpí nepřesným posunem tiskárny 
 | **Frontend Framework** | **Next.js 16 (App Router)** | React 19, Server Actions, klientský rendering náhledů |
 | **Jazyk** | **TypeScript 5** | Striktní typová kontrola napříč celou aplikací |
 | **Styling & UI** | **Tailwind CSS v4 & Lucide Icons** | Moderní responsive design system s micro-animacemi |
-| **PDF Engine** | **pdf-lib & fontkit** | Vykreslování vektorového PDF na straně klienta s podpora české diakritiky (Roboto TTF) |
+| **PDF Engine** | **pdf-lib & fontkit** | Vykreslování vektorového PDF na straně klienta s podporou české diakritiky (Roboto TTF) |
 | **Databáze & ORM** | **Prisma ORM & SQLite** | Lokální relační databáze s rychlou odezvou |
 | **Datový Import** | **SheetJS (xlsx)** | Parsování `.csv`, `.xlsx` a `.xls` souborů |
 | **Testování & CI/CD** | **Vitest & GitHub Actions** | Automatizovaný ucelený pipeline (lint, tsc, tests, build) |
@@ -49,7 +49,7 @@ Tradiční nástroje pro tisk etiket často trpí nepřesným posunem tiskárny 
 
 ### 1. 🖨️ Generátor PDF & Tiskový Layout (`src/lib/pdfGenerator.ts`)
 - Vektorové generování PDF dokumentů v reálném čase s přesností na bod (`pt` / `mm`).
-- Možnost zapnutí **Duálního layoutu** (dva menší štítky na jedné etikety) nebo **Grid layoutu 6 ikon**.
+- Možnost zapnutí **Duálního layoutu** (dva menší štítky na jedné etikety) nebo **Grid layoutu - 6 ikon**.
 - Uživatelská nastavení offsetů (`horní margin`, `levý margin`, `mezeru mezi etiketami`).
 
 ### 2. 📊 Chytrý Importér s Heuristikou (`src/lib/importers/`)
