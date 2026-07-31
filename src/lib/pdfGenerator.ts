@@ -1,5 +1,9 @@
 import {
   PDFDocument,
+  PDFPage,
+  PDFFont,
+  PDFImage,
+  RGB,
   rgb,
   pushGraphicsState,
   popGraphicsState,
@@ -37,7 +41,34 @@ export interface CustomIconConfig {
 
 interface EmbeddedIcon {
   config: CustomIconConfig;
-  embedded: any | null;
+  embedded: PDFImage | null;
+}
+
+interface FieldsConfig {
+  showBrand?: boolean;
+  showName?: boolean;
+  showSku?: boolean;
+  showEan?: boolean;
+  showPrice?: boolean;
+  showSafetyText?: boolean;
+  showSafetyIcon?: boolean;
+  showContactText?: boolean;
+  showContactIcon?: boolean;
+  showNote?: boolean;
+}
+
+interface FontConfig {
+  textAlignment?: 'left' | 'center' | 'right';
+  brandColor?: string;
+  nameColor?: string;
+  priceColor?: string;
+  bodyColor?: string;
+  brandFontSize?: number;
+  nameFontSize?: number;
+  skuFontSize?: number;
+  priceFontSize?: number;
+  bodyFontSize?: number;
+  [key: string]: unknown;
 }
 
 interface DrawContentArgs {
@@ -72,7 +103,7 @@ function getAlignX(blockW: number, contentW: number, alignment: 'left'|'center'|
   return 0;
 }
 
-function wrapText(text: string, maxWidth: number, font: any, fontSize: number): string[] {
+function wrapText(text: string, maxWidth: number, font: PDFFont, fontSize: number): string[] {
   if (!text) return [];
   const words = text.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
@@ -114,14 +145,14 @@ function base64ToUint8Array(dataUrl: string): Uint8Array {
 
 // ─── Icon primitives ──────────────────────────────────────────────────────────
 
-const drawWarningIcon = (page: any, x: number, y: number, h: number) => {
+const drawWarningIcon = (page: PDFPage, x: number, y: number, h: number) => {
   const w = h * 1.2;
   page.drawRectangle({ x, y, width: w, height: h, color: rgb(0.9,0.5,0.1), borderColor: rgb(0.9,0.5,0.1), borderWidth: 0 });
   page.drawLine({ start:{x: x+w/2, y: y+2}, end:{x: x+w/2, y: y+h-1.5}, thickness:0.9, color: rgb(1,1,1) });
   page.drawLine({ start:{x: x+w/2, y: y+0.8}, end:{x: x+w/2, y: y+1.4}, thickness:0.9, color: rgb(1,1,1) });
 };
 
-const drawEnvelopeIcon = (page: any, x: number, y: number, w: number, h: number, color: any) => {
+const drawEnvelopeIcon = (page: PDFPage, x: number, y: number, w: number, h: number, color: RGB) => {
   page.drawRectangle({ x, y, width:w, height:h, borderWidth:0.6, borderColor:color, color:rgb(1,1,1) });
   page.drawLine({ start:{x, y:y+h}, end:{x:x+w/2, y:y+h/2}, thickness:0.5, color });
   page.drawLine({ start:{x:x+w, y:y+h}, end:{x:x+w/2, y:y+h/2}, thickness:0.5, color });
@@ -133,18 +164,18 @@ const drawEnvelopeIcon = (page: any, x: number, y: number, w: number, h: number,
 // draw_x=horizontal (visual reading direction) and draw_y=vertical (line direction).
 
 function drawLabelContent(
-  page: any,
+  page: PDFPage,
   product: Omit<PrintItem,'quantity'>,
-  fields: any,
-  fonts: any,
+  fields: FieldsConfig,
+  fonts: FontConfig,
   args: DrawContentArgs,
-  regularFont: any,
-  boldFont: any,
+  regularFont: PDFFont,
+  boldFont: PDFFont,
   isRotated: boolean = false
 ) {
-  const { originX, originY, contentW, totalH, rightEdgeX } = args;
+  const { originX, originY, contentW, totalH } = args;
   const padding = 4;
-  const alignment = (fonts.textAlignment as 'left'|'center'|'right') || 'left';
+  const alignment = fonts.textAlignment || 'left';
   const brandColor = hexToRgb(fonts.brandColor || '#64748b');
   const nameColor  = hexToRgb(fonts.nameColor  || '#0f172a');
   const priceColor = hexToRgb(fonts.priceColor || '#dc2626');
@@ -264,7 +295,7 @@ function drawLabelContent(
 // ─── Custom image icons ────────────────────────────────────────────────────────
 
 function drawCustomIcons(
-  page: any,
+  page: PDFPage,
   icons: EmbeddedIcon[],
   x: number, y: number,
   labelW: number, labelH: number,
@@ -320,7 +351,7 @@ function drawCustomIcons(
 }
 
 function drawCustomIconsSix(
-  page: any,
+  page: PDFPage,
   icons: EmbeddedIcon[],
   x: number, y: number,
   labelW: number, labelH: number
@@ -361,13 +392,13 @@ function drawCustomIconsSix(
 // ─── Main label renderer ───────────────────────────────────────────────────────
 
 function drawLabel(
-  page: any,
+  page: PDFPage,
   product: Omit<PrintItem,'quantity'>,
   row: number,
   col: number,
   template: { fieldsConfig: string; fontConfig: string; layoutConfig: string },
-  regularFont: any,
-  boldFont: any,
+  regularFont: PDFFont,
+  boldFont: PDFFont,
   embeddedIcons: EmbeddedIcon[],
   fontOverrides?: {
     nameFontSize?: number;

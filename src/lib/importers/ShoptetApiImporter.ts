@@ -3,7 +3,7 @@ import { ProductImporter, ImportResult } from './ProductImporter';
 export class ShoptetApiImporter implements ProductImporter {
   name = 'Shoptet API';
 
-  async parse(_file: File): Promise<ImportResult> {
+  async parse(): Promise<ImportResult> {
     // API Importer doesn't parse local files, but we implement the interface.
     // In a real environment, we would fetch products from the Shoptet API.
     return {
@@ -38,12 +38,13 @@ export class ShoptetApiImporter implements ProductImporter {
         ],
         success: true
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Chyba připojení';
       return {
         headers: [],
         rows: [],
         success: false,
-        error: `Chyba API: ${err.message || 'Chyba připojení'}`
+        error: `Chyba API: ${msg}`
       };
     }
   }

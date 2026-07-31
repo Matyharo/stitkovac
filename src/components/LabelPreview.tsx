@@ -235,7 +235,7 @@ export function LabelPreview({ fields, fonts, layout, product: customProduct }: 
   const w = isRotated ? layout.labelHeight : layout.labelWidth;
   const h = isRotated ? layout.labelWidth : layout.labelHeight;
 
-  const renderedIcons = (layout.customIcons || []).map((icon: any) => {
+  const renderedIcons = (layout.customIcons || []).map((icon) => {
     const iconWidthPt = icon.iconWidth * mm;
     const iconHeightPt = icon.iconHeight * mm;
 

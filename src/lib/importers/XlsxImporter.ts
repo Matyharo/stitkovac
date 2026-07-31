@@ -26,7 +26,7 @@ export class XlsxImporter implements ProductImporter {
           }
 
           // Get raw rows
-          const rawRows = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+          const rawRows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, { header: 1 });
           
           if (rawRows.length === 0) {
             resolve({ headers: [], rows: [], success: true });
@@ -34,7 +34,7 @@ export class XlsxImporter implements ProductImporter {
           }
 
           // Read headers from first row
-          const headers = (rawRows[0] as any[]).map(h => String(h || '').trim()).filter(h => h.length > 0);
+          const headers = (rawRows[0] as unknown[]).map(h => String(h || '').trim()).filter(h => h.length > 0);
           const rows: Record<string, string>[] = [];
 
           for (let i = 1; i < rawRows.length; i++) {
@@ -57,12 +57,13 @@ export class XlsxImporter implements ProductImporter {
           }
 
           resolve({ headers, rows, success: true });
-        } catch (err: any) {
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : 'Neočekávaná chyba při zpracování Excel souboru.';
           resolve({
             headers: [],
             rows: [],
             success: false,
-            error: err.message || 'Neočekávaná chyba při zpracování Excel souboru.',
+            error: errorMessage,
           });
         }
       };

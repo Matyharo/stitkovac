@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CsvImporter } from '@/lib/importers/CsvImporter';
 import { XlsxImporter } from '@/lib/importers/XlsxImporter';
+import { findBestHeader } from '@/lib/importers/ProductImporter';
 import { saveImportedProducts, analyzeImportedProducts } from '@/app/actions';
 import {
   Upload,
@@ -128,16 +129,6 @@ export default function ImportPage() {
     }
   };
 
-  // Heuristic header search
-  const findBestHeader = (headersList: string[], keywords: string[]): string => {
-    for (const keyword of keywords) {
-      const match = headersList.find(
-        (h) => h.toLowerCase() === keyword || h.toLowerCase().includes(keyword)
-      );
-      if (match) return match;
-    }
-    return '';
-  };
 
   // Convert mapping configurations to preview dataset
   const getMappedProducts = () => {
