@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
+import { execSync } from 'child_process';
 import { prisma } from '../db';
 import * as ShoptetFeedParser from '../importers/ShoptetFeedParser';
 import {
@@ -35,6 +36,14 @@ async function cleanupTestRecords() {
 }
 
 describe('Product Description & Safety Text Concurrency in Feed Sync and Import', () => {
+  beforeAll(async () => {
+    try {
+      await prisma.product.count();
+    } catch {
+      execSync('npx prisma db push --skip-generate', { stdio: 'ignore' });
+    }
+  });
+
   beforeEach(async () => {
     await cleanupTestRecords();
   });
