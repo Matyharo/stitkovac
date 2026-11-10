@@ -1410,5 +1410,93 @@ export async function changeUserPassword(id: string, newPassword: string) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// FEED SYNCHRONIZATION & PRODUCT APPROVAL ACTIONS
+// ---------------------------------------------------------------------------
+
+export async function getFeedConfigAction() {
+  const { getFeedConfig } = await import('@/lib/feedSync');
+  return await getFeedConfig();
+}
+
+export async function saveFeedConfigAction(data: {
+  url: string;
+  autoApplySafe: boolean;
+  priceThresholdPercent: number;
+  checkEanValidity: boolean;
+  cronSecret?: string;
+}) {
+  const { saveFeedConfig } = await import('@/lib/feedSync');
+  const res = await saveFeedConfig(data);
+  revalidatePath('/import');
+  revalidatePath('/settings');
+  return res;
+}
+
+export async function triggerFeedSyncAction(overrideUrl?: string) {
+  const { syncProductsFromFeed } = await import('@/lib/feedSync');
+  const result = await syncProductsFromFeed(overrideUrl);
+  revalidatePath('/import');
+  revalidatePath('/products');
+  revalidatePath('/');
+  return result;
+}
+
+export async function getPendingApprovalsAction() {
+  const { getPendingApprovals } = await import('@/lib/feedSync');
+  return await getPendingApprovals();
+}
+
+export async function getPendingApprovalsCountAction() {
+  const { getPendingApprovalsCount } = await import('@/lib/feedSync');
+  return await getPendingApprovalsCount();
+}
+
+export async function approvePendingProductAction(
+  id: string,
+  overrides?: {
+    name?: string;
+    brand?: string;
+    price?: number;
+    ean?: string;
+  }
+) {
+  const { approvePendingProduct } = await import('@/lib/feedSync');
+  const res = await approvePendingProduct(id, overrides);
+  revalidatePath('/import');
+  revalidatePath('/products');
+  revalidatePath('/');
+  return res;
+}
+
+export async function rejectPendingProductAction(id: string) {
+  const { rejectPendingProduct } = await import('@/lib/feedSync');
+  const res = await rejectPendingProduct(id);
+  revalidatePath('/import');
+  return res;
+}
+
+export async function approveAllPendingProductsAction(ids?: string[]) {
+  const { approveAllPendingProducts } = await import('@/lib/feedSync');
+  const res = await approveAllPendingProducts(ids);
+  revalidatePath('/import');
+  revalidatePath('/products');
+  revalidatePath('/');
+  return res;
+}
+
+export async function rejectAllPendingProductsAction(ids?: string[]) {
+  const { rejectAllPendingProducts } = await import('@/lib/feedSync');
+  const res = await rejectAllPendingProducts(ids);
+  revalidatePath('/import');
+  return res;
+}
+
+export async function getSyncLogsAction(limit: number = 10) {
+  const { getSyncLogs } = await import('@/lib/feedSync');
+  return await getSyncLogs(limit);
+}
+
+
 
 

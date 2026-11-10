@@ -1098,6 +1098,16 @@ function PrintPageContent() {
               </button>
             </div>
           </div>
+          <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-3 flex items-start gap-2.5 text-xs text-amber-900">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <span className="font-bold">Důležité pro přesný tisk na etikety:</span>
+              <p className="text-amber-800">
+                V dialogu tisku (Ctrl+P) nastavte <strong>Měřítko: 100 % (Skutečná velikost)</strong> a <strong>Okraje: Žádné</strong>. PDF soubor má toto nastavení zakódováno přímo v sobě, ale některé prohlížeče vyžadují toto potvrzení při prvním tisku.
+              </p>
+            </div>
+          </div>
+
           <iframe
             src={pdfUrl}
             className="w-full h-[650px] border border-slate-150 rounded-2xl shadow-inner bg-slate-50"

@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { CsvImporter } from '@/lib/importers/CsvImporter';
 import { XlsxImporter } from '@/lib/importers/XlsxImporter';
 import { findBestHeader } from '@/lib/importers/ProductImporter';
-import { saveImportedProducts, analyzeImportedProducts } from '@/app/actions';
+import { saveImportedProducts, analyzeImportedProducts, getPendingApprovalsCountAction } from '@/app/actions';
+import FeedImportTab from '@/components/FeedImportTab';
 import {
   Upload,
   AlertCircle,
@@ -21,7 +22,9 @@ import {
   Info,
   TrendingUp,
   TrendingDown,
-  Settings
+  Settings,
+  Sparkles,
+  Layers
 } from 'lucide-react';
 
 interface MappingState {
@@ -37,6 +40,10 @@ interface MappingState {
 
 export default function ImportPage() {
   const router = useRouter();
+
+  // Mode: 'feed' (automatický Shoptet feed & schvalování) nebo 'manual' (nahrání souboru)
+  const [importMode, setImportMode] = useState<'feed' | 'manual'>('feed');
+  const [pendingApprovalsCount, setPendingApprovalsCount] = useState<number>(0);
 
   // Step state: 1 = upload, 2 = map columns, 3 = preview & save
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -239,38 +246,78 @@ export default function ImportPage() {
   return (
     <div className="flex-1 p-8 max-w-5xl mx-auto w-full">
       {/* Page Header */}
-      <div className="mb-8">
+      <div className="mb-6">
         <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">
           Import produktů
         </h1>
         <p className="text-slate-500 mt-1">
-          Nahrajte katalog produktů ve formátu Excel (.xlsx) nebo CSV a namapujte jeho sloupce do databáze.
+          Automatická synchronizace z e-shop feedu Shoptetu se schvalováním podezřelých změn nebo manuální nahrání tabulky.
         </p>
       </div>
 
-      {/* Progress Steps Indicators */}
-      <div className="flex items-center gap-4 mb-8 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-        <div className={`flex items-center gap-2 text-sm font-semibold ${step >= 1 ? 'text-indigo-600' : 'text-slate-400'}`}>
-          <span className={`w-6 h-6 rounded-full flex items-center justify-center border text-xs font-bold ${
-            step > 1 ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-indigo-600'
-          }`}>1</span>
-          Soubor
-        </div>
-        <ArrowRight className="w-4 h-4 text-slate-300" />
-        <div className={`flex items-center gap-2 text-sm font-semibold ${step >= 2 ? 'text-indigo-600' : 'text-slate-400'}`}>
-          <span className={`w-6 h-6 rounded-full flex items-center justify-center border text-xs font-bold ${
-            step > 2 ? 'bg-indigo-600 border-indigo-600 text-white' : step === 2 ? 'border-indigo-600' : 'border-slate-300'
-          }`}>2</span>
-          Mapování
-        </div>
-        <ArrowRight className="w-4 h-4 text-slate-300" />
-        <div className={`flex items-center gap-2 text-sm font-semibold ${step >= 3 ? 'text-indigo-600' : 'text-slate-400'}`}>
-          <span className={`w-6 h-6 rounded-full flex items-center justify-center border text-xs font-bold ${
-            step === 3 ? 'border-indigo-600' : 'border-slate-300'
-          }`}>3</span>
-          Náhled a uložení
-        </div>
+      {/* Main Mode Tabs */}
+      <div className="flex items-center gap-2 mb-6 border-b border-slate-200">
+        <button
+          onClick={() => setImportMode('feed')}
+          className={`flex items-center gap-2 px-5 py-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${
+            importMode === 'feed'
+              ? 'border-indigo-600 text-indigo-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+          }`}
+        >
+          <Sparkles className="w-4 h-4" />
+          Automatický Shoptet feed & Schvalování
+          {pendingApprovalsCount > 0 && (
+            <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+              {pendingApprovalsCount}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setImportMode('manual')}
+          className={`flex items-center gap-2 px-5 py-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${
+            importMode === 'manual'
+              ? 'border-indigo-600 text-indigo-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+          }`}
+        >
+          <Upload className="w-4 h-4" />
+          Manuální import ze souboru (CSV / XLSX)
+        </button>
       </div>
+
+      {/* AUTOMATICKÝ FEED & SCHVALOVÁNÍ */}
+      {importMode === 'feed' && (
+        <FeedImportTab onPendingCountChange={(count) => setPendingApprovalsCount(count)} />
+      )}
+
+      {/* MANUÁLNÍ IMPORT ZE SOUBORU */}
+      {importMode === 'manual' && (
+        <div>
+          {/* Progress Steps Indicators */}
+          <div className="flex items-center gap-4 mb-8 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+            <div className={`flex items-center gap-2 text-sm font-semibold ${step >= 1 ? 'text-indigo-600' : 'text-slate-400'}`}>
+              <span className={`w-6 h-6 rounded-full flex items-center justify-center border text-xs font-bold ${
+                step > 1 ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-indigo-600'
+              }`}>1</span>
+              Soubor
+            </div>
+            <ArrowRight className="w-4 h-4 text-slate-300" />
+            <div className={`flex items-center gap-2 text-sm font-semibold ${step >= 2 ? 'text-indigo-600' : 'text-slate-400'}`}>
+              <span className={`w-6 h-6 rounded-full flex items-center justify-center border text-xs font-bold ${
+                step > 2 ? 'bg-indigo-600 border-indigo-600 text-white' : step === 2 ? 'border-indigo-600' : 'border-slate-300'
+              }`}>2</span>
+              Mapování
+            </div>
+            <ArrowRight className="w-4 h-4 text-slate-300" />
+            <div className={`flex items-center gap-2 text-sm font-semibold ${step >= 3 ? 'text-indigo-600' : 'text-slate-400'}`}>
+              <span className={`w-6 h-6 rounded-full flex items-center justify-center border text-xs font-bold ${
+                step === 3 ? 'border-indigo-600' : 'border-slate-300'
+              }`}>3</span>
+              Náhled a uložení
+            </div>
+          </div>
 
       {/* Error Banner */}
       {error && (
@@ -942,6 +989,8 @@ export default function ImportPage() {
             </div>
           </div>
         </div>
+      )}
+      </div>
       )}
     </div>
   );

@@ -1023,78 +1023,35 @@ export default function SettingsPage() {
       {/* Settings Grid (Shoptet API & SQLite) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         
-        {/* Shoptet API Connection Form */}
+        {/* Shoptet Feed Connection Banner & Info */}
         <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 space-y-4">
           <h3 className="font-bold text-base text-slate-900 flex items-center gap-2 pb-2 border-b border-slate-50">
             <KeyRound className="w-4.5 h-4.5 text-indigo-500" />
-            Napojení na Shoptet API
+            Automatický Shoptet Feed
           </h3>
           
           <p className="text-xs text-slate-500 leading-relaxed">
-            Příprava pro automatickou synchronizaci produktů z Vašeho e-shopu Shoptet. Vyžaduje Shoptet API doplněk.
+            Místo placeného Shoptet API doplňku aplikace využívá přímou synchronizaci přes Shoptet produktový exportní feed (XLSX / XML) včetně schvalovacího řízení anomálií a cenových skoků.
           </p>
 
-          <form onSubmit={handleSaveShoptet} className="space-y-4" autoComplete="off">
-            <div>
-              <label className="block text-xs font-bold text-slate-650 uppercase tracking-wider mb-1">
-                API Endpoint URL
-              </label>
-              <input
-                type="url"
-                required
-                value={shoptetUrl}
-                onChange={(e) => setShoptetUrl(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-                autoComplete="off"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-650 uppercase tracking-wider mb-1">
-                E-shop ID (Shoptet ID)
-              </label>
-              <input
-                type="text"
-                placeholder="Např: 254869"
-                value={shoptetClientId}
-                onChange={(e) => setShoptetClientId(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-                autoComplete="new-password"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-650 uppercase tracking-wider mb-1">
-                API Přístupový klíč (Token)
-              </label>
-              <input
-                type="password"
-                placeholder="• • • • • • • • • • • • • • • •"
-                value={shoptetApiKey}
-                onChange={(e) => setShoptetApiKey(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-                autoComplete="new-password"
-              />
-            </div>
-
-            <div className="pt-2 flex items-center justify-between">
-              <span className="text-[11px] font-semibold flex items-center gap-1.5">
-                Stav integrace:
-                {shoptetStatus === 'connected' ? (
-                  <span className="text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">Připojeno</span>
-                ) : (
-                  <span className="text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">Neaktivní</span>
-                )}
+          <div className="bg-indigo-50/60 p-4 rounded-xl border border-indigo-100 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-indigo-950">Aktivní režim feedu:</span>
+              <span className="text-xs font-bold bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                Aktivní (XLSX / XML)
               </span>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 transition-all"
-              >
-                {loading && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-                Uložit
-              </button>
             </div>
-          </form>
+            <p className="text-[11px] text-indigo-800 leading-relaxed">
+              Nastavení URL adresy feedu, limitů podezřelých změn, webhooku pro cron a schvalování pozastavených produktů najdete přímo v modulu Importu.
+            </p>
+            <button
+              type="button"
+              onClick={() => router.push('/import')}
+              className="w-full py-2 px-3 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm transition-colors text-center"
+            >
+              Otevřít Shoptet feed & Schvalování
+            </button>
+          </div>
         </div>
 
         {/* Database Management & Tools */}

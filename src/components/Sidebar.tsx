@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
@@ -15,7 +15,7 @@ import {
   ScrollText,
   User
 } from 'lucide-react';
-import { logout } from '@/app/actions';
+import { logout, getPendingApprovalsCountAction } from '@/app/actions';
 
 interface SidebarProps {
   currentUser?: {
@@ -29,6 +29,21 @@ export default function Sidebar({ currentUser }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [pendingApprovalsCount, setPendingApprovalsCount] = useState<number>(0);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchPending = async () => {
+      try {
+        const count = await getPendingApprovalsCountAction();
+        if (isMounted) setPendingApprovalsCount(count);
+      } catch {}
+    };
+    fetchPending();
+    return () => {
+      isMounted = false;
+    };
+  }, [pathname]);
 
   const handleLogout = () => {
     setShowLogoutConfirm(true);
@@ -90,7 +105,12 @@ export default function Sidebar({ currentUser }: SidebarProps) {
               <Icon className={`w-4 h-4 shrink-0 transition-transform duration-300 group-hover:scale-110 ${
                 isActive ? 'text-indigo-200' : 'text-slate-400 group-hover:text-slate-300'
               }`} />
-              {item.name}
+              <span className="flex-1 text-left">{item.name}</span>
+              {item.href === '/import' && pendingApprovalsCount > 0 && (
+                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-amber-500 text-white shadow-sm animate-pulse">
+                  {pendingApprovalsCount}
+                </span>
+              )}
             </Link>
           );
         })}

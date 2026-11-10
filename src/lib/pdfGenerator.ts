@@ -1,5 +1,6 @@
 import {
   PDFDocument,
+  PDFName,
   PDFPage,
   PDFFont,
   PDFImage,
@@ -557,6 +558,13 @@ export async function generateLabelsPdf(
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit(fontkit);
+
+  // Set PDF ViewerPreferences to enforce 100% print scaling (Actual Size, no shrinkage)
+  const viewerPrefs = pdfDoc.context.obj({
+    PrintScaling: PDFName.of('None'),
+    PickTrayByPDFSize: true,
+  });
+  pdfDoc.catalog.set(PDFName.of('ViewerPreferences'), viewerPrefs);
 
   // Load Roboto fonts (Czech UTF-8 support)
   const [regularFontBytes, boldFontBytes] = await Promise.all([

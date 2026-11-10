@@ -71,3 +71,50 @@ model ActivityLog {
   createdAt DateTime @default(now())
 }
 
+model FeedConfig {
+  id                    String    @id @default(uuid())
+  url                   String    @default("https://www.depilujeme.cz/export/products.xls?patternId=177&stripTags=1&partnerId=8&hash=bd7ec2786770a3a07fbc0289e88b5bd42a24c36accfad326881f45d72ecbc724")
+  autoApplySafe         Boolean   @default(true)
+  priceThresholdPercent Float     @default(30.0)
+  checkEanValidity      Boolean   @default(true)
+  cronSecret            String    @default("shoptet-feed-sync-secret")
+  lastSyncAt            DateTime?
+  syncStatus            String?   // "success" | "error" | "running" | "idle"
+  syncMessage           String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+}
+
+model PendingProductApproval {
+  id             String   @id @default(uuid())
+  sku            String   @unique
+  name           String
+  brand          String?
+  price          Float?
+  ean            String?
+  safetyText     String?
+  contactText    String?
+  note           String?
+  oldData        String?  // JSON stávajícího stavu produktu v DB (pokud existoval)
+  changes        String?  // JSON zjištěných změn (pole, původní hodnota, nová hodnota)
+  warningType    String   // "price_jump" | "name_change" | "invalid_ean" | "manual_review" | "new_product"
+  warningMessage String
+  status         String   @default("pending") // "pending" | "approved" | "rejected"
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model SyncLog {
+  id            String   @id @default(uuid())
+  status        String   // "success" | "error" | "warning"
+  totalFetched  Int      @default(0)
+  autoCreated   Int      @default(0)
+  autoUpdated   Int      @default(0)
+  pendingReview Int      @default(0)
+  unchanged     Int      @default(0)
+  errorMessage  String?
+  durationMs    Int      @default(0)
+  createdAt     DateTime @default(now())
+}
+
+
