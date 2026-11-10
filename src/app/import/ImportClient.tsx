@@ -30,6 +30,7 @@ import {
 interface MappingState {
   sku: string;
   name: string;
+  description: string;
   brand: string;
   price: string;
   safetyText: string;
@@ -64,6 +65,7 @@ export default function ImportPage() {
   const [mapping, setMapping] = useState<MappingState>({
     sku: '',
     name: '',
+    description: '',
     brand: '',
     price: '',
     safetyText: '',
@@ -74,6 +76,7 @@ export default function ImportPage() {
 
   const [overwriteConfig, setOverwriteConfig] = useState({
     name: true,
+    description: true,
     brand: true,
     price: true,
     safetyText: true,
@@ -118,12 +121,13 @@ export default function ImportPage() {
       const autoMapping: MappingState = {
         sku: findBestHeader(result.headers, ['sku', 'kód', 'kod', 'id', 'product code', 'kód zboží']),
         name: findBestHeader(result.headers, ['name', 'název', 'nazev', 'produkt', 'product', 'titul']),
+        description: findBestHeader(result.headers, ['description', 'popis', 'popis produktu', 'detail', 'shortdescription']),
         brand: findBestHeader(result.headers, ['brand', 'značka', 'znacka', 'výrobce', 'vyrobce', 'dodavatel']),
         price: findBestHeader(result.headers, ['price', 'cena', 'částka', 'castka']),
         safetyText: findBestHeader(result.headers, ['safety', 'bezpečnost', 'bezpecnost', 'varování', 'safety text']),
         contactText: findBestHeader(result.headers, ['contact', 'kontakt', 'distributor', 'adresa']),
         ean: findBestHeader(result.headers, ['ean', 'čárový kód', 'bar code', 'barcode']),
-        note: findBestHeader(result.headers, ['note', 'poznámka', 'poznamka', 'popis']),
+        note: findBestHeader(result.headers, ['note', 'poznámka', 'poznamka', 'interní poznámka', 'internalnote']),
       };
 
       setMapping(autoMapping);
@@ -149,6 +153,7 @@ export default function ImportPage() {
       return {
         sku: mapping.sku ? row[mapping.sku] || '' : '',
         name: mapping.name ? row[mapping.name] || '' : '',
+        description: mapping.description ? row[mapping.description] || '' : '',
         brand: mapping.brand ? row[mapping.brand] || '' : '',
         price: priceNum,
         safetyText: mapping.safetyText ? row[mapping.safetyText] || '' : '',
@@ -232,6 +237,7 @@ export default function ImportPage() {
     setAnalysis(null);
     setOverwriteConfig({
       name: true,
+      description: true,
       brand: true,
       price: true,
       safetyText: true,
@@ -468,6 +474,33 @@ export default function ImportPage() {
                   ))}
                 </select>
               </div>
+
+              {/* Description mapping */}
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">
+                  Popis produktu (Description)
+                </label>
+                <select
+                  value={mapping.description}
+                  onChange={(e) => setMapping({ ...mapping, description: e.target.value })}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                >
+                  <option value="">-- Ignorovat / Nevybráno --</option>
+                  {headers.map((h) => (
+                    <option key={h} value={h}>{h}</option>
+                  ))}
+                </select>
+                {mapping.description && (
+                  <p className="mt-1.5 text-[11px] text-slate-500 bg-slate-50 border border-slate-200/80 rounded-lg px-2.5 py-1.5 line-clamp-2 break-words">
+                    <span className="font-bold text-indigo-600">Ukázka ze sloupce „{mapping.description}“: </span>
+                    {(() => {
+                      const sampleRow = rawRows.find((r) => r[mapping.description]?.trim());
+                      const sampleVal = sampleRow ? sampleRow[mapping.description].trim() : '';
+                      return sampleVal ? (sampleVal.length > 160 ? `${sampleVal.slice(0, 160)}…` : sampleVal) : '(ve všech řádcích prázdné)';
+                    })()}
+                  </p>
+                )}
+              </div>
             </div>
 
             {/* Optional fields group */}
@@ -699,6 +732,7 @@ export default function ImportPage() {
                     <tr className="bg-slate-100/80 text-slate-600 uppercase tracking-wider font-bold border-b border-slate-200">
                       <th className="px-4 py-3">SKU / Kód</th>
                       <th className="px-4 py-3">Název produktu</th>
+                      <th className="px-4 py-3">Popis</th>
                       <th className="px-4 py-3">Značka</th>
                       <th className="px-4 py-3 text-right">Cena</th>
                       <th className="px-4 py-3">Bezpečnostní text</th>
@@ -711,6 +745,7 @@ export default function ImportPage() {
                       <tr key={idx} className="hover:bg-slate-50/50">
                         <td className="px-4 py-3 font-semibold text-slate-700">{prod.sku || <span className="text-rose-450 italic">Prázdné</span>}</td>
                         <td className="px-4 py-3 font-semibold text-slate-900 max-w-[200px] truncate">{prod.name || <span className="text-rose-450 italic">Prázdné</span>}</td>
+                        <td className="px-4 py-3 text-slate-500 max-w-[220px] truncate" title={prod.description || ''}>{prod.description || '-'}</td>
                         <td className="px-4 py-3 text-slate-500">{prod.brand || '-'}</td>
                         <td className="px-4 py-3 text-right font-bold text-slate-900">{prod.price !== undefined ? `${prod.price} Kč` : '-'}</td>
                         <td className="px-4 py-3 text-slate-500 max-w-[150px] truncate">{prod.safetyText || '-'}</td>
@@ -720,7 +755,7 @@ export default function ImportPage() {
                     ))}
                     {rawRows.length > 15 && (
                       <tr className="bg-slate-50/30">
-                        <td colSpan={7} className="px-4 py-3 text-center text-slate-400 italic">
+                        <td colSpan={8} className="px-4 py-3 text-center text-slate-400 italic">
                           ... a dalších {rawRows.length - 15} položek v importu ...
                         </td>
                       </tr>
@@ -877,6 +912,16 @@ export default function ImportPage() {
                   className="rounded text-indigo-600 focus:ring-indigo-500 h-4.5 w-4.5 border-slate-300 cursor-pointer"
                 />
                 <span>Název produktu</span>
+              </label>
+
+              <label className="flex items-center gap-2.5 text-xs font-bold text-slate-700 cursor-pointer bg-white p-3 rounded-xl border border-slate-200/80 hover:border-indigo-300 hover:shadow-xs transition-all">
+                <input
+                  type="checkbox"
+                  checked={overwriteConfig.description}
+                  onChange={(e) => setOverwriteConfig({ ...overwriteConfig, description: e.target.checked })}
+                  className="rounded text-indigo-600 focus:ring-indigo-500 h-4.5 w-4.5 border-slate-300 cursor-pointer"
+                />
+                <span>Popis produktu</span>
               </label>
 
               <label className="flex items-center gap-2.5 text-xs font-bold text-slate-700 cursor-pointer bg-white p-3 rounded-xl border border-slate-200/80 hover:border-indigo-300 hover:shadow-xs transition-all">

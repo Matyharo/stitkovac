@@ -21,6 +21,49 @@ export async function verifyPassword(password: string, storedHash: string): Prom
   return verifyHash === hash;
 }
 
+export async function requireAuthenticatedSession(): Promise<{
+  authenticated: boolean;
+  username?: string;
+}> {
+  try {
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get('auth_session')?.value;
+    if (!sessionCookie) {
+      return { authenticated: false };
+    }
+
+    if (sessionCookie === 'authenticated_true') {
+      return { authenticated: true, username: 'admin' };
+    }
+
+    const decoded = JSON.parse(sessionCookie) as { username?: unknown };
+    if (!decoded || typeof decoded.username !== 'string' || !decoded.username.trim()) {
+      return { authenticated: false };
+    }
+
+    const normalizedUsername = decoded.username.toLowerCase().trim();
+    const user = await prisma.user.findUnique({
+      where: { username: normalizedUsername },
+      select: { username: true },
+    });
+
+    if (user) {
+      return { authenticated: true, username: user.username };
+    }
+
+    // Fallback pokud v DB ještě nebyl vytvořen žádný uživatel a jde o výchozího admina
+    const userCount = await prisma.user.count();
+    const defaultUsername = (process.env.BASIC_AUTH_USER || 'admin').toLowerCase().trim();
+    if (userCount === 0 && normalizedUsername === defaultUsername) {
+      return { authenticated: true, username: defaultUsername };
+    }
+
+    return { authenticated: false };
+  } catch {
+    return { authenticated: false };
+  }
+}
+
 export async function logActivity(action: string, details: string) {
   try {
     const cookieStore = await cookies();
@@ -64,8 +107,8 @@ export async function getProducts(search?: string) {
 
     const query = `%${search.trim()}%`;
     return await prisma.$queryRawUnsafe<any[]>(
-      `SELECT * FROM "Product" WHERE "name" LIKE ? OR "sku" LIKE ? OR "brand" LIKE ? OR "ean" LIKE ? ORDER BY "updatedAt" DESC`,
-      query, query, query, query
+      `SELECT * FROM "Product" WHERE "name" LIKE ? OR "sku" LIKE ? OR "brand" LIKE ? OR "ean" LIKE ? OR "description" LIKE ? ORDER BY "updatedAt" DESC`,
+      query, query, query, query, query
     );
   } catch (error) {
     console.error('Error fetching products:', error);
@@ -87,6 +130,7 @@ export async function getProductById(id: string) {
 export async function updateProduct(id: string, data: {
   sku: string;
   name: string;
+  description?: string | null;
   brand?: string | null;
   price?: number | null;
   safetyText?: string | null;
@@ -110,10 +154,16 @@ export async function updateProduct(id: string, data: {
       }
     }
 
+    const description =
+      data.description !== undefined
+        ? data.description?.trim() || null
+        : existingProduct?.description ?? null;
+
     const updated = await prisma.product.update({
       where: { id },
       data: {
         ...data,
+        description,
         contactText,
         safetyText,
       },
@@ -170,6 +220,7 @@ export async function deleteProducts(ids: string[]) {
 export async function createProduct(data: {
   sku: string;
   name: string;
+  description?: string | null;
   brand?: string | null;
   price?: number | null;
   safetyText?: string | null;
@@ -187,9 +238,12 @@ export async function createProduct(data: {
       ? data.safetyText
       : resolveSafetyTextForBrand(data.brand, rules);
 
+    const description = data.description?.trim() ? data.description.trim() : null;
+
     const created = await prisma.product.create({
       data: {
         ...data,
+        description,
         contactText,
         safetyText,
       },
@@ -224,6 +278,7 @@ export async function saveImportedProducts(
   products: {
     sku: string;
     name: string;
+    description?: string;
     brand?: string;
     price?: number;
     safetyText?: string;
@@ -233,6 +288,7 @@ export async function saveImportedProducts(
   }[],
   overwriteConfig?: {
     name?: boolean;
+    description?: boolean;
     brand?: boolean;
     price?: boolean;
     safetyText?: boolean;
@@ -245,6 +301,7 @@ export async function saveImportedProducts(
     let importedCount = 0;
     let updatedCount = 0;
     const rules = await getContactRules();
+    const { stripHtmlToPlainText } = await import('@/lib/safetyClassifier');
 
     // Fetch all products that match imported SKUs in one query (to be fast)
     const skus = products.map(p => p.sku).filter(Boolean);
@@ -258,10 +315,12 @@ export async function saveImportedProducts(
     for (const p of products) {
       if (!p.sku || !p.name) continue; // Skip invalid rows
 
+      const cleanedDesc = p.description ? stripHtmlToPlainText(p.description, 4000) : '';
       const existing = existingMap.get(p.sku);
 
       if (existing) {
         const shouldOverwriteName = overwriteConfig?.name !== false;
+        const shouldOverwriteDescription = overwriteConfig?.description !== false;
         const shouldOverwriteBrand = overwriteConfig?.brand !== false;
         const shouldOverwritePrice = overwriteConfig?.price !== false;
         const shouldOverwriteSafety = overwriteConfig?.safetyText !== false;
@@ -270,6 +329,9 @@ export async function saveImportedProducts(
         const shouldOverwriteNote = overwriteConfig?.note !== false;
 
         const name = shouldOverwriteName ? getMergedValue(p.name, existing.name) : existing.name;
+        const description = shouldOverwriteDescription
+          ? getMergedValue(cleanedDesc || null, existing.description)
+          : existing.description;
         const brand = shouldOverwriteBrand ? getMergedValue(p.brand, existing.brand) : existing.brand;
         const price = shouldOverwritePrice ? getMergedValue(p.price, existing.price) : existing.price;
         
@@ -305,6 +367,7 @@ export async function saveImportedProducts(
         // Check if anything actually changed compared to the database record
         const hasChanges = 
           name !== existing.name ||
+          (description || null) !== (existing.description || null) ||
           brand !== existing.brand ||
           price !== existing.price ||
           safetyText !== existing.safetyText ||
@@ -317,6 +380,7 @@ export async function saveImportedProducts(
             where: { sku: p.sku },
             data: {
               name,
+              description: description || null,
               brand,
               price,
               safetyText,
@@ -341,6 +405,7 @@ export async function saveImportedProducts(
           data: {
             sku: p.sku,
             name: p.name,
+            description: cleanedDesc || null,
             brand: brand,
             price: p.price || null,
             safetyText: resolvedSafety,
@@ -1048,6 +1113,7 @@ export async function applyContactRulesToBatch(
 export interface ImportProductInput {
   sku: string;
   name: string;
+  description?: string;
   brand?: string;
   price?: number;
   safetyText?: string;
@@ -1062,6 +1128,7 @@ export async function analyzeImportedProducts(products: ImportProductInput[]) {
     const updatedProducts: {
       sku: string;
       name: string;
+      description?: string;
       brand?: string;
       price?: number;
       safetyText?: string;
@@ -1083,6 +1150,7 @@ export async function analyzeImportedProducts(products: ImportProductInput[]) {
 
     // Load contact rules to check auto contact text
     const rules = await getContactRules();
+    const { stripHtmlToPlainText } = await import('@/lib/safetyClassifier');
 
     // Fetch all products that match imported SKUs in one query (to be fast)
     const skus = products.map(p => p.sku).filter(Boolean);
@@ -1095,10 +1163,11 @@ export async function analyzeImportedProducts(products: ImportProductInput[]) {
     for (const p of products) {
       if (!p.sku || !p.name) continue;
 
+      const cleanedDesc = p.description ? stripHtmlToPlainText(p.description, 4000) : '';
       const existing = existingMap.get(p.sku);
 
       if (!existing) {
-        newProducts.push(p);
+        newProducts.push({ ...p, description: cleanedDesc || undefined });
         
         // Warnings for new products
         if (p.ean && p.ean.length !== 13) {
@@ -1110,6 +1179,7 @@ export async function analyzeImportedProducts(products: ImportProductInput[]) {
           });
         }
       } else {
+        const description = getMergedValue(cleanedDesc || null, existing.description);
         const brand = getMergedValue(p.brand, existing.brand);
         const price = getMergedValue(p.price, existing.price);
         
@@ -1142,6 +1212,9 @@ export async function analyzeImportedProducts(products: ImportProductInput[]) {
         
         if (p.name !== existing.name) {
           changes.push({ field: 'Název', from: existing.name, to: p.name });
+        }
+        if ((description || '') !== (existing.description || '')) {
+          changes.push({ field: 'Popis', from: existing.description || '', to: description || '' });
         }
         if (brand !== existing.brand) {
           changes.push({ field: 'Značka', from: existing.brand, to: brand });
@@ -1456,6 +1529,7 @@ export async function approvePendingProductAction(
   id: string,
   overrides?: {
     name?: string;
+    description?: string;
     brand?: string;
     price?: number;
     ean?: string;
@@ -1467,6 +1541,39 @@ export async function approvePendingProductAction(
   revalidatePath('/products');
   revalidatePath('/');
   return res;
+}
+
+// ---------------------------------------------------------------------------
+// AI SAFETY TEXT SUGGESTION ACTION (LOCAL OLLAMA)
+// ---------------------------------------------------------------------------
+
+export async function suggestProductSafetyTextAction(input: {
+  name: string;
+  description?: string | null;
+}) {
+  const auth = await requireAuthenticatedSession();
+  if (!auth.authenticated) {
+    return {
+      ok: false as const,
+      errorType: 'unauthorized' as const,
+      error: 'Pro použití AI asistenta musíte být přihlášeni v aplikaci.',
+    };
+  }
+
+  const { classifyProductSafety } = await import('@/lib/safetyClassifier');
+  const result = await classifyProductSafety({
+    name: input?.name ?? '',
+    description: input?.description ?? '',
+  });
+
+  if (result.ok) {
+    await logActivity(
+      'AI_SAFETY_SUGGEST',
+      `AI návrh bezpečnosti pro "${input.name.slice(0, 50)}": ${result.code} (${result.mode})`
+    );
+  }
+
+  return result;
 }
 
 export async function rejectPendingProductAction(id: string) {

@@ -1,8 +1,14 @@
 'use client';
 
 import React, { useState, useEffect, Suspense } from 'react';
+import Link from 'next/link';
 import { getProducts, getTemplates, savePrintJob, getPrintJobById, updateProduct } from '@/app/actions';
-import { generateLabelsPdf, PrintItem } from '@/lib/pdfGenerator';
+import {
+  generateLabelsPdf,
+  detectSafetyTextOverflows,
+  LabelOverflowDetail,
+  PrintItem
+} from '@/lib/pdfGenerator';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { LabelPreview } from '@/components/LabelPreview';
 import {
@@ -13,12 +19,14 @@ import {
   Trash2,
   RefreshCw,
   AlertCircle,
+  AlertTriangle,
   Check,
   ChevronRight,
   Sparkles,
   ExternalLink,
   X,
-  Pencil
+  Pencil,
+  Settings
 } from 'lucide-react';
 
 interface Product {
@@ -75,6 +83,9 @@ function PrintPageContent() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+
+  // State for safety text overflow detection before export
+  const [overflowItems, setOverflowItems] = useState<LabelOverflowDetail[]>([]);
 
   const handleQuickEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -151,6 +162,32 @@ function PrintPageContent() {
       setPreviewProductId('');
     }
   }, [printList, previewProductId]);
+
+  // Live check whether safetyText and subsequent fields fit into the selected template for all queued SKUs
+  useEffect(() => {
+    let cancelled = false;
+    const tpl = templates.find((t) => t.id === selectedTemplateId);
+    if (!tpl || printList.length === 0) {
+      setOverflowItems([]);
+      return;
+    }
+
+    detectSafetyTextOverflows(printList, tpl, customFontSizes)
+      .then((res) => {
+        if (!cancelled) {
+          setOverflowItems(res);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOverflowItems([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [printList, selectedTemplateId, templates, customFontSizes]);
 
   // Load products and templates
   const loadData = async () => {
@@ -475,6 +512,75 @@ function PrintPageContent() {
             <button onClick={() => setError(null)} className="text-rose-400 hover:text-rose-600">
               <X className="w-4 h-4" />
             </button>
+          </div>
+        )}
+
+        {overflowItems.length > 0 && (
+          <div
+            data-testid="safety-overflow-warning"
+            className="mt-3 p-4 bg-amber-50 border border-amber-300 text-amber-950 rounded-2xl space-y-3 animate-in fade-in duration-200"
+          >
+            <div className="flex flex-col md:flex-row md:items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="font-bold text-sm text-amber-950">
+                    Upozornění před exportem: U {overflowItems.length}{' '}
+                    {overflowItems.length === 1 ? 'položky' : 'položek'} se celý text nevejde do zvolené šablony
+                  </h4>
+                  <p className="text-xs text-amber-800 mt-0.5 leading-relaxed">
+                    Podle skutečných rozměrů šablony <strong>{templateConfig?.name}</strong>, fontu Roboto a zalomení řádků v PDF dochází k oříznutí textu u těchto SKU:
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPdfUrl(null);
+                    setCustomFontSizes((prev) => ({
+                      ...prev,
+                      nameFontSize: Math.max(6, Number((prev.nameFontSize - 1).toFixed(1))),
+                      bodyFontSize: Math.max(4, Number((prev.bodyFontSize - 1).toFixed(1))),
+                      priceFontSize: Math.max(7, Number((prev.priceFontSize - 1).toFixed(1))),
+                    }));
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-amber-100/70 text-amber-900 border border-amber-300 text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Zmenšit písmo pro tuto dávku
+                </button>
+                <Link
+                  href="/templates"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors shadow-2xs"
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                  Upravit šablonu etiket
+                </Link>
+              </div>
+            </div>
+
+            <ul className="space-y-1.5 pl-8 text-xs list-disc text-amber-900">
+              {overflowItems.map((ov) => (
+                <li key={ov.id} className="leading-snug">
+                  <span className="font-mono font-bold bg-white/90 border border-amber-300 px-1.5 py-0.5 rounded mr-1.5">
+                    SKU: {ov.sku}
+                  </span>
+                  <strong className="text-amber-950">{ov.name}</strong> —{' '}
+                  {ov.safetyTextClipped ? (
+                    <span>
+                      vejde se jen <strong>{ov.fittingSafetyLines} z {ov.totalSafetyLines}</strong> řádků bezpečnostního textu
+                    </span>
+                  ) : (
+                    <span>
+                      bezpečnostní text ({ov.totalSafetyLines} řádků) vytlačuje pole mimo spodní okraj štítku
+                    </span>
+                  )}{' '}
+                  <span className="text-amber-800">
+                    (nevejde se: {ov.clippedFields.join(', ')})
+                  </span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </div>
@@ -811,6 +917,18 @@ function PrintPageContent() {
                           {!item.contactText && (
                             <span className="text-[9px] font-bold bg-amber-50 border border-amber-100 text-amber-800 px-1.5 py-0.5 rounded whitespace-nowrap" title="Chybí kontaktní údaje">Chybí kontakt</span>
                           )}
+                          {(() => {
+                            const ov = overflowItems.find((o) => o.id === item.id || o.sku === item.sku);
+                            if (!ov) return null;
+                            return (
+                              <span
+                                className="text-[9px] font-bold bg-rose-100 border border-rose-300 text-rose-800 px-1.5 py-0.5 rounded whitespace-nowrap"
+                                title={`Celý text se nevejde do zvolené šablony (${ov.clippedFields.join(', ')})`}
+                              >
+                                Text se nevejde ({ov.fittingSafetyLines}/{ov.totalSafetyLines} ř.)
+                              </span>
+                            );
+                          })()}
                         </>
                       )}
                     </div>

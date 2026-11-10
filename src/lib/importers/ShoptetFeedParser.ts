@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { stripHtmlToPlainText } from '../safetyClassifier';
 
 export interface FeedProductItem {
   sku: string;
@@ -7,6 +8,7 @@ export interface FeedProductItem {
   price?: number;
   ean?: string;
   note?: string;
+  description?: string;
   rawDescription?: string;
 }
 
@@ -100,8 +102,17 @@ export async function parseShoptetFeedFromBuffer(buffer: ArrayBuffer | Buffer): 
       const rawNote = row['internalNote'] ?? row['INTERNAL_NOTE'] ?? row['interniPoznamka'] ?? row['note'];
       const note = rawNote !== undefined && rawNote !== null ? String(rawNote).trim() : undefined;
 
-      const rawDescription = row['description'] ?? row['DESCRIPTION'] ?? row['popis'];
-      const description = rawDescription !== undefined && rawDescription !== null ? String(rawDescription).trim() : undefined;
+      const rawDescriptionVal =
+        row['shortDescription'] ??
+        row['SHORT_DESCRIPTION'] ??
+        row['kratkyPopis'] ??
+        row['description'] ??
+        row['DESCRIPTION'] ??
+        row['popis'] ??
+        row['Popis'];
+      const rawDescriptionStr =
+        rawDescriptionVal !== undefined && rawDescriptionVal !== null ? String(rawDescriptionVal).trim() : '';
+      const cleanedDescription = rawDescriptionStr ? stripHtmlToPlainText(rawDescriptionStr, 4000) : undefined;
 
       products.push({
         sku,
@@ -110,7 +121,8 @@ export async function parseShoptetFeedFromBuffer(buffer: ArrayBuffer | Buffer): 
         price,
         ean: ean || undefined,
         note: note || undefined,
-        rawDescription: description || undefined,
+        description: cleanedDescription || undefined,
+        rawDescription: cleanedDescription || undefined,
       });
     }
 
@@ -164,7 +176,8 @@ function parseShoptetXml(xml: string): FeedProductItem[] {
     }
 
     const ean = extractTag(itemBlock, 'EAN') || undefined;
-    const description = extractTag(itemBlock, 'DESCRIPTION') || extractTag(itemBlock, 'SHORT_DESCRIPTION') || undefined;
+    const rawDescXml = extractTag(itemBlock, 'SHORT_DESCRIPTION') || extractTag(itemBlock, 'DESCRIPTION') || '';
+    const description = rawDescXml ? stripHtmlToPlainText(rawDescXml, 4000) || undefined : undefined;
 
     products.push({
       sku,
@@ -172,6 +185,7 @@ function parseShoptetXml(xml: string): FeedProductItem[] {
       brand,
       price,
       ean,
+      description,
       rawDescription: description,
     });
   }
@@ -184,7 +198,12 @@ function parseShoptetXml(xml: string): FeedProductItem[] {
  */
 export async function fetchAndParseShoptetFeed(feedUrl: string): Promise<ParseFeedResult> {
   try {
-    const response = await fetch(feedUrl, {
+    // Pokud má Shoptet exportní URL parametr stripTags=1, Shoptet odstraní značky <script>,
+    // ale ponechá uvnitř surový JavaScript kód. Stažením bez stripTags=1 získáme čisté HTML,
+    // ze kterého stripHtmlToPlainText bezpečně odstraní celé <script> a <style> bloky.
+    const effectiveUrl = feedUrl.replace(/([?&])stripTags=1(&|$)/i, '$1').replace(/[?&]$/, '');
+
+    const response = await fetch(effectiveUrl, {
       method: 'GET',
       headers: {
         'User-Agent': 'Stitkovac-Sync/1.0',

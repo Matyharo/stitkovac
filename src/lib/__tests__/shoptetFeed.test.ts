@@ -48,6 +48,7 @@ describe('ShoptetFeedParser', () => {
       price: 159.5,
       ean: '8032835164512',
       note: 'INCI, Vyrobeno',
+      description: undefined,
       rawDescription: undefined,
     });
 
@@ -86,6 +87,8 @@ describe('ShoptetFeedParser', () => {
     expect(result.products[0].brand).toBe('Biemme');
     expect(result.products[0].price).toBe(890);
     expect(result.products[0].ean).toBe('8012345678901');
+    expect(result.products[0].description).toBe('Popis produktu');
+    expect(result.products[0].rawDescription).toBe('Popis produktu');
 
     expect(result.products[1].sku).toBe('XML-SKU-200');
     expect(result.products[1].name).toBe('Dřevěné špachtle');

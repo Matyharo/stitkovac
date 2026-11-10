@@ -3,8 +3,7 @@ import { Product, ContactRule, PendingProductApproval } from '@prisma/client';
 import { fetchAndParseShoptetFeed, FeedProductItem } from './importers/ShoptetFeedParser';
 import { logActivity } from '@/app/actions';
 
-const DEFAULT_FEED_URL =
-  'https://www.depilujeme.cz/export/products.xls?patternId=177&stripTags=1&partnerId=8&hash=bd7ec2786770a3a07fbc0289e88b5bd42a24c36accfad326881f45d72ecbc724';
+const DEFAULT_FEED_URL = process.env.SHOPTET_FEED_URL || '';
 
 export interface FeedConfigData {
   id: string;
@@ -79,7 +78,7 @@ function formatContactText(companyName: string, ico: string, address: string, we
   return parts.join('\n');
 }
 
-function resolveContactTextForBrand(brand: string | null | undefined, rules: any[]) {
+function resolveContactTextForBrand(brand: string | null | undefined, rules: ContactRule[]) {
   const cleanBrand = (brand || '').trim().toLowerCase();
   const defaultRule = rules.find((r) => r.isDefault);
   const brandRules = rules.filter((r) => !r.isDefault && r.brandPattern.trim() !== '');
@@ -101,7 +100,7 @@ function resolveContactTextForBrand(brand: string | null | undefined, rules: any
   return '';
 }
 
-function resolveSafetyTextForBrand(brand: string | null | undefined, rules: any[]) {
+function resolveSafetyTextForBrand(brand: string | null | undefined, rules: ContactRule[]) {
   const cleanBrand = (brand || '').trim().toLowerCase();
   const defaultRule = rules.find((r) => r.isDefault);
   const brandRules = rules.filter((r) => !r.isDefault && r.brandPattern.trim() !== '');
@@ -189,6 +188,7 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
     for (const item of fetchedProducts) {
       if (!item.sku || !item.name) continue;
 
+      const itemDescription = (item.description ?? item.rawDescription)?.trim() || undefined;
       const existing = existingMap.get(item.sku);
       const isEanInvalid =
         config.checkEanValidity && item.ean && item.ean.length !== 13 && !/^\d{8}$/.test(item.ean);
@@ -213,6 +213,7 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
           productsToCreate.push({
             sku: item.sku,
             name: item.name,
+            description: itemDescription || null,
             brand: item.brand || null,
             price: item.price ?? null,
             ean: item.ean || null,
@@ -226,6 +227,7 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
           approvalsToUpsert.push({
             sku: item.sku,
             name: item.name,
+            description: itemDescription || null,
             brand: item.brand || null,
             price: item.price ?? null,
             ean: item.ean || null,
@@ -242,7 +244,7 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
         }
       } else {
         // EXISTUJÍCÍ PRODUKT - porovnáme změny
-        const changes: { field: string; from: any; to: any }[] = [];
+        const changes: { field: string; from: unknown; to: unknown }[] = [];
         const warnings: string[] = [];
 
         // Kontrola názvu
@@ -253,6 +255,15 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
           if (lenDiff > 15 || Math.min(item.name.length, existing.name.length) < 5) {
             warnings.push('Výrazná změna názvu produktu');
           }
+        }
+
+        // Kontrola popisu (uloží se i tehdy, když je popis jedinou změnou; prázdná hodnota ve feedu zachová existující popis)
+        if (itemDescription && itemDescription !== (existing.description || '').trim()) {
+          changes.push({
+            field: 'Popis',
+            from: existing.description || '(žádný)',
+            to: itemDescription,
+          });
         }
 
         // Kontrola značky
@@ -293,6 +304,7 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
         }
 
         const isSuspicious = warnings.length > 0;
+        const mergedDescription = itemDescription || existing.description || null;
 
         if (config.autoApplySafe && !isSuspicious) {
           // Bezpečná aktualizace -> rovnou aplikujeme
@@ -304,6 +316,7 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
             id: existing.id,
             data: {
               name: item.name,
+              description: mergedDescription,
               brand: newBrand || null,
               price: item.price ?? existing.price,
               ean: item.ean ?? existing.ean,
@@ -318,12 +331,14 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
           approvalsToUpsert.push({
             sku: item.sku,
             name: item.name,
+            description: mergedDescription,
             brand: item.brand ?? existing.brand,
             price: item.price ?? existing.price,
             ean: item.ean ?? existing.ean,
             note: item.note ?? existing.note,
             oldData: JSON.stringify({
               name: existing.name,
+              description: existing.description,
               brand: existing.brand,
               price: existing.price,
               ean: existing.ean,
@@ -374,6 +389,7 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
             where: { sku: app.sku },
             update: {
               name: app.name,
+              description: app.description,
               brand: app.brand,
               price: app.price,
               ean: app.ean,
@@ -482,6 +498,70 @@ export async function getPendingApprovalsCount(): Promise<number> {
 }
 
 /**
+ * Pomocná funkce pro bezpečné určení safetyText a contactText při schválení položky z fronty.
+ * Zabraňuje tomu, aby dříve vytvořená položka ve frontě schvalování při pozdějším schválení
+ * přepsala novější ručně uložený bezpečnostní text v tabulce Product starou kopií nebo výchozím pravidlem.
+ */
+function resolveTextsForApprovedItem(
+  item: PendingProductApproval,
+  existingProduct: Product | null,
+  finalBrand: string | null,
+  rules: ContactRule[]
+): { safetyText: string | null; contactText: string | null } {
+  let oldSafetySnapshot: string | null = null;
+  let oldContactSnapshot: string | null = null;
+  if (item.oldData) {
+    try {
+      const parsed = JSON.parse(item.oldData) as { safetyText?: string | null; contactText?: string | null };
+      if (parsed && typeof parsed.safetyText === 'string') {
+        oldSafetySnapshot = parsed.safetyText;
+      }
+      if (parsed && typeof parsed.contactText === 'string') {
+        oldContactSnapshot = parsed.contactText;
+      }
+    } catch {
+      // ignore invalid JSON in oldData
+    }
+  }
+
+  const currentDbSafety = existingProduct?.safetyText?.trim() || '';
+  const pendingSafety = item.safetyText?.trim() || '';
+  let safetyText: string | null;
+
+  if (existingProduct) {
+    // Pokud byl safetyText v DB mezitím ručně změněn oproti stavu při zařazení do fronty,
+    // nebo pokud již v DB existuje vyplněný safetyText, zachováme hodnotu z DB.
+    if (currentDbSafety) {
+      safetyText = existingProduct.safetyText;
+    } else if (pendingSafety && pendingSafety !== (oldSafetySnapshot || '').trim()) {
+      safetyText = pendingSafety;
+    } else {
+      safetyText = resolveSafetyTextForBrand(finalBrand, rules) || null;
+    }
+  } else {
+    safetyText = pendingSafety || resolveSafetyTextForBrand(finalBrand, rules) || null;
+  }
+
+  const currentDbContact = existingProduct?.contactText?.trim() || '';
+  const pendingContact = item.contactText?.trim() || '';
+  let contactText: string | null;
+
+  if (existingProduct) {
+    if (currentDbContact) {
+      contactText = existingProduct.contactText;
+    } else if (pendingContact && pendingContact !== (oldContactSnapshot || '').trim()) {
+      contactText = pendingContact;
+    } else {
+      contactText = resolveContactTextForBrand(finalBrand, rules) || null;
+    }
+  } else {
+    contactText = pendingContact || resolveContactTextForBrand(finalBrand, rules) || null;
+  }
+
+  return { safetyText, contactText };
+}
+
+/**
  * Schválí konkrétní položku z fronty a zapíše ji do tabulky Product.
  * Umožňuje volitelně předat upravené hodnoty (overrides).
  */
@@ -489,6 +569,7 @@ export async function approvePendingProduct(
   id: string,
   overrides?: {
     name?: string;
+    description?: string;
     brand?: string;
     price?: number;
     ean?: string;
@@ -502,29 +583,38 @@ export async function approvePendingProduct(
       return { success: false, error: 'Položka ke schválení nebyla nalezena.' };
     }
 
-    const rules = await prisma.contactRule.findMany();
+    const [rules, existingProduct] = await Promise.all([
+      prisma.contactRule.findMany(),
+      prisma.product.findUnique({ where: { sku: item.sku } }),
+    ]);
+
     const finalName = overrides?.name?.trim() || item.name;
+    const finalDescription =
+      overrides?.description !== undefined
+        ? overrides.description.trim() || null
+        : item.description?.trim() || existingProduct?.description || null;
     const finalBrand = overrides?.brand !== undefined ? overrides.brand.trim() || null : item.brand;
     const finalPrice = overrides?.price !== undefined ? overrides.price : item.price;
     const finalEan = overrides?.ean !== undefined ? overrides.ean.trim() || null : item.ean;
 
-    const contactText = item.contactText || resolveContactTextForBrand(finalBrand, rules);
-    const safetyText = item.safetyText || resolveSafetyTextForBrand(finalBrand, rules);
+    const { safetyText, contactText } = resolveTextsForApprovedItem(item, existingProduct, finalBrand, rules);
 
     await prisma.product.upsert({
       where: { sku: item.sku },
       update: {
         name: finalName,
+        description: finalDescription,
         brand: finalBrand,
         price: finalPrice,
         ean: finalEan,
-        note: item.note,
-        contactText: contactText || undefined,
-        safetyText: safetyText || undefined,
+        note: item.note ?? existingProduct?.note ?? null,
+        contactText: contactText,
+        safetyText: safetyText,
       },
       create: {
         sku: item.sku,
         name: finalName,
+        description: finalDescription,
         brand: finalBrand,
         price: finalPrice,
         ean: finalEan,
@@ -607,25 +697,33 @@ export async function approveAllPendingProducts(ids?: string[]) {
     }
 
     const rules = await prisma.contactRule.findMany();
+    const skus = items.map((i) => i.sku);
+    const existingProducts = await prisma.product.findMany({
+      where: { sku: { in: skus } },
+    });
+    const existingMap = new Map<string, Product>(existingProducts.map((p) => [p.sku, p]));
 
     for (const item of items) {
-      const contactText = item.contactText || resolveContactTextForBrand(item.brand, rules);
-      const safetyText = item.safetyText || resolveSafetyTextForBrand(item.brand, rules);
+      const existingProduct = existingMap.get(item.sku) ?? null;
+      const finalDescription = item.description?.trim() || existingProduct?.description || null;
+      const { safetyText, contactText } = resolveTextsForApprovedItem(item, existingProduct, item.brand, rules);
 
       await prisma.product.upsert({
         where: { sku: item.sku },
         update: {
           name: item.name,
+          description: finalDescription,
           brand: item.brand,
           price: item.price,
           ean: item.ean,
-          note: item.note,
-          contactText: contactText || undefined,
-          safetyText: safetyText || undefined,
+          note: item.note ?? existingProduct?.note ?? null,
+          contactText: contactText,
+          safetyText: safetyText,
         },
         create: {
           sku: item.sku,
           name: item.name,
+          description: finalDescription,
           brand: item.brand,
           price: item.price,
           ean: item.ean,

@@ -30,6 +30,25 @@ export interface PrintItem {
   quantity: number;
 }
 
+export interface FontOverrides {
+  nameFontSize?: number;
+  skuFontSize?: number;
+  brandFontSize?: number;
+  priceFontSize?: number;
+  bodyFontSize?: number;
+}
+
+export interface LabelOverflowDetail {
+  id: string;
+  sku: string;
+  name: string;
+  overflows: boolean;
+  totalSafetyLines: number;
+  fittingSafetyLines: number;
+  safetyTextClipped: boolean;
+  clippedFields: string[];
+}
+
 export interface CustomIconConfig {
   id: string;
   name: string;
@@ -542,19 +561,273 @@ function drawLabel(
   page.pushOperators(popGraphicsState());
 }
 
+// ─── Font cache & overflow measurement ────────────────────────────────────────
+
+let cachedFontBytes: {
+  regular: ArrayBuffer | Uint8Array;
+  bold: ArrayBuffer | Uint8Array;
+} | null = null;
+
+let cachedMeasurementFontsPromise: Promise<{
+  regularFont: PDFFont;
+  boldFont: PDFFont;
+}> | null = null;
+
+/**
+ * Umožňuje v testovacím prostředí (Node/Vitest) předat binární data fontů Roboto přímo z disku.
+ */
+export function setRobotoFontBytesCache(
+  regular: ArrayBuffer | Uint8Array,
+  bold: ArrayBuffer | Uint8Array
+) {
+  cachedFontBytes = { regular, bold };
+  cachedMeasurementFontsPromise = null;
+}
+
+async function loadRobotoFontBytes(): Promise<{
+  regular: ArrayBuffer | Uint8Array;
+  bold: ArrayBuffer | Uint8Array;
+}> {
+  if (cachedFontBytes) {
+    return cachedFontBytes;
+  }
+  const [regular, bold] = await Promise.all([
+    fetch('/fonts/Roboto-Regular.ttf').then((r) => {
+      if (!r.ok) throw new Error('Regular font failed');
+      return r.arrayBuffer();
+    }),
+    fetch('/fonts/Roboto-Bold.ttf').then((r) => {
+      if (!r.ok) throw new Error('Bold font failed');
+      return r.arrayBuffer();
+    }),
+  ]);
+  cachedFontBytes = { regular, bold };
+  return cachedFontBytes;
+}
+
+async function getMeasurementFonts(): Promise<{
+  regularFont: PDFFont;
+  boldFont: PDFFont;
+}> {
+  if (!cachedMeasurementFontsPromise) {
+    cachedMeasurementFontsPromise = (async () => {
+      const { regular, bold } = await loadRobotoFontBytes();
+      const doc = await PDFDocument.create();
+      doc.registerFontkit(fontkit);
+      const regularFont = await doc.embedFont(regular);
+      const boldFont = await doc.embedFont(bold);
+      return { regularFont, boldFont };
+    })();
+  }
+  return cachedMeasurementFontsPromise;
+}
+
+/**
+ * Spočítá podle skutečných rozměrů šablony, velikosti písma (Roboto) a zalomení řádků v PDF,
+ * zda se bezpečnostní text a navazující pole pro daný produkt celé vejdou na štítek.
+ */
+export function measureSingleLabelOverflow(
+  product: Omit<PrintItem, 'quantity'>,
+  template: { fieldsConfig: string; fontConfig: string; layoutConfig: string },
+  regularFont: PDFFont,
+  boldFont: PDFFont,
+  fontOverrides?: FontOverrides
+): LabelOverflowDetail {
+  const fields: FieldsConfig = JSON.parse(template.fieldsConfig);
+  const fonts: FontConfig = { ...JSON.parse(template.fontConfig), ...fontOverrides };
+  const layout = JSON.parse(template.layoutConfig);
+
+  if (layout.sixIconsLayout || !fields.showSafetyText || !product.safetyText?.trim()) {
+    return {
+      id: product.id,
+      sku: product.sku,
+      name: product.name,
+      overflows: false,
+      totalSafetyLines: 0,
+      fittingSafetyLines: 0,
+      safetyTextClipped: false,
+      clippedFields: [],
+    };
+  }
+
+  const mm = 2.83464567;
+  const labelW = (layout.labelWidth || 63.5) * mm;
+  const labelH = (layout.labelHeight || 38.1) * mm;
+  const isRotated = (layout.labelRotation || 0) === 90;
+  const isDual = !!layout.dualLayout;
+  const padding = 4;
+
+  let contentW: number;
+  let totalH: number;
+
+  if (isRotated) {
+    contentW = labelH - 2 * padding;
+    totalH = isDual ? labelW / 2 - 0.5 : labelW;
+  } else {
+    contentW = isDual ? (labelW - 2 * padding - 1) / 2 : labelW - 2 * padding;
+    totalH = labelH;
+  }
+
+  const alignment = fonts.textAlignment || 'left';
+  let currentY = totalH - padding;
+  const minY = padding;
+
+  const clippedFields: string[] = [];
+
+  // 1. Brand
+  if (fields.showBrand && product.brand) {
+    const sz = fonts.brandFontSize || 7;
+    currentY -= sz;
+    currentY -= 2;
+  }
+
+  // 2. Product name (≤ 2 lines)
+  if (fields.showName && product.name) {
+    const sz = fonts.nameFontSize || 9.5;
+    const lines = wrapText(product.name, contentW, boldFont, sz);
+    const draw = lines.slice(0, 2);
+    let drawnNameLines = 0;
+    for (let i = 0; i < draw.length; i++) {
+      if (currentY - sz < minY) break;
+      drawnNameLines++;
+      currentY -= sz;
+      currentY -= 1.5;
+    }
+    if (drawnNameLines < draw.length) {
+      clippedFields.push('Název produktu');
+    }
+    currentY -= 2;
+  }
+
+  // 3. SKU/EAN row
+  const priceVal = product.price !== null && product.price !== undefined ? product.price : null;
+  const showPrice = !!(fields.showPrice && priceVal !== null);
+  let codeText = '';
+  if (fields.showSku && product.sku) codeText += `SKU: ${product.sku}`;
+  if (fields.showEan && product.ean) {
+    if (codeText) codeText += ' | ';
+    codeText += `EAN: ${product.ean}`;
+  }
+  const showCode = (fields.showSku || fields.showEan) && codeText.length > 0;
+
+  if (showCode) {
+    const csz = fonts.skuFontSize || 6.5;
+    if (currentY - csz >= minY) {
+      currentY -= csz;
+      currentY -= 3;
+    } else {
+      clippedFields.push('SKU / EAN');
+    }
+  }
+
+  // 4. Safety text
+  const safetySz = fonts.bodyFontSize || 6;
+  const safetyIconW = fields.showSafetyIcon && !isRotated ? 11 : 0;
+  const safetyAvW = contentW - (alignment === 'left' ? safetyIconW : 0);
+  const safetyLines = wrapText(product.safetyText, safetyAvW, regularFont, safetySz);
+  let fittingSafetyLines = 0;
+
+  for (let i = 0; i < safetyLines.length; i++) {
+    if (currentY - safetySz < minY) break;
+    fittingSafetyLines++;
+    currentY -= safetySz;
+    currentY -= 1.5;
+  }
+  currentY -= 2.5;
+
+  const safetyTextClipped = fittingSafetyLines < safetyLines.length;
+  if (safetyTextClipped) {
+    clippedFields.push('Bezpečnostní text');
+  }
+
+  // 5. Price
+  if (showPrice) {
+    const psz = fonts.priceFontSize || 11;
+    if (currentY - psz >= minY) {
+      currentY -= psz;
+      currentY -= 4;
+    } else {
+      clippedFields.push('Cena');
+    }
+  }
+
+  // 6. Contact text
+  if (fields.showContactText && product.contactText) {
+    const cSz = fonts.bodyFontSize || 6;
+    const cIconW = fields.showContactIcon && !isRotated ? 11 : 0;
+    const parts = String(product.contactText).split('\n');
+    let first = true;
+    let totalContactLines = 0;
+    let fittingContactLines = 0;
+
+    for (const part of parts) {
+      if (!part.trim()) continue;
+      const avW = contentW - (alignment === 'left' && first ? cIconW : 0);
+      const wrp = wrapText(part.trim(), avW, regularFont, cSz);
+      totalContactLines += wrp.length;
+      for (let i = 0; i < wrp.length; i++) {
+        if (currentY - cSz < minY) break;
+        fittingContactLines++;
+        currentY -= cSz;
+        currentY -= 1.5;
+        first = false;
+      }
+    }
+
+    if (fittingContactLines < totalContactLines) {
+      clippedFields.push('Kontaktní údaje');
+    }
+  }
+
+  const overflows = safetyTextClipped || clippedFields.length > 0;
+
+  return {
+    id: product.id,
+    sku: product.sku,
+    name: product.name,
+    overflows,
+    totalSafetyLines: safetyLines.length,
+    fittingSafetyLines,
+    safetyTextClipped,
+    clippedFields,
+  };
+}
+
+/**
+ * Zjistí pro seznam položek k tisku, u kterých SKU se celý text při zapnutém bezpečnostním textu
+ * nevejde do zvolené šablony.
+ */
+export async function detectSafetyTextOverflows(
+  items: Omit<PrintItem, 'quantity'>[],
+  template: { fieldsConfig: string; fontConfig: string; layoutConfig: string },
+  fontOverrides?: FontOverrides
+): Promise<LabelOverflowDetail[]> {
+  const fields: FieldsConfig = JSON.parse(template.fieldsConfig);
+  const layout = JSON.parse(template.layoutConfig);
+  if (layout.sixIconsLayout || !fields.showSafetyText || items.length === 0) {
+    return [];
+  }
+
+  const { regularFont, boldFont } = await getMeasurementFonts();
+  const results: LabelOverflowDetail[] = [];
+
+  for (const item of items) {
+    const detail = measureSingleLabelOverflow(item, template, regularFont, boldFont, fontOverrides);
+    if (detail.overflows) {
+      results.push(detail);
+    }
+  }
+
+  return results;
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export async function generateLabelsPdf(
   items: PrintItem[],
   template: { fieldsConfig: string; fontConfig: string; layoutConfig: string },
   startPosition: number,
-  fontOverrides?: {
-    nameFontSize?: number;
-    skuFontSize?: number;
-    brandFontSize?: number;
-    priceFontSize?: number;
-    bodyFontSize?: number;
-  }
+  fontOverrides?: FontOverrides
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit(fontkit);
@@ -567,10 +840,7 @@ export async function generateLabelsPdf(
   pdfDoc.catalog.set(PDFName.of('ViewerPreferences'), viewerPrefs);
 
   // Load Roboto fonts (Czech UTF-8 support)
-  const [regularFontBytes, boldFontBytes] = await Promise.all([
-    fetch('/fonts/Roboto-Regular.ttf').then(r => { if (!r.ok) throw new Error('Regular font failed'); return r.arrayBuffer(); }),
-    fetch('/fonts/Roboto-Bold.ttf').then(r => { if (!r.ok) throw new Error('Bold font failed'); return r.arrayBuffer(); }),
-  ]);
+  const { regular: regularFontBytes, bold: boldFontBytes } = await loadRobotoFontBytes();
   const regularFont = await pdfDoc.embedFont(regularFontBytes);
   const boldFont    = await pdfDoc.embedFont(boldFontBytes);
 

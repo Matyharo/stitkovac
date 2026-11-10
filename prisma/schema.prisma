@@ -11,6 +11,7 @@ model Product {
   id          String   @id @default(uuid())
   sku         String   @unique
   name        String
+  description String?
   brand       String?
   price       Float?
   safetyText  String?
@@ -73,7 +74,7 @@ model ActivityLog {
 
 model FeedConfig {
   id                    String    @id @default(uuid())
-  url                   String    @default("https://www.depilujeme.cz/export/products.xls?patternId=177&stripTags=1&partnerId=8&hash=bd7ec2786770a3a07fbc0289e88b5bd42a24c36accfad326881f45d72ecbc724")
+  url                   String    @default("")
   autoApplySafe         Boolean   @default(true)
   priceThresholdPercent Float     @default(30.0)
   checkEanValidity      Boolean   @default(true)
@@ -89,6 +90,7 @@ model PendingProductApproval {
   id             String   @id @default(uuid())
   sku            String   @unique
   name           String
+  description    String?
   brand          String?
   price          Float?
   ean            String?

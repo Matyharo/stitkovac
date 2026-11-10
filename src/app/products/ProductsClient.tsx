@@ -8,7 +8,8 @@ import {
   updateProduct,
   deleteProduct,
   createProduct,
-  deleteProducts
+  deleteProducts,
+  suggestProductSafetyTextAction
 } from '@/app/actions';
 import {
   Search,
@@ -16,18 +17,22 @@ import {
   Edit2,
   Trash2,
   AlertCircle,
+  AlertTriangle,
   Check,
   RefreshCw,
   X,
   FileSpreadsheet,
   HelpCircle,
-  Tag
+  Tag,
+  Sparkles,
+  ShieldCheck
 } from 'lucide-react';
 
 interface Product {
   id: string;
   sku: string;
   name: string;
+  description?: string | null;
   brand: string | null;
   price: number | null;
   safetyText: string | null;
@@ -36,6 +41,15 @@ interface Product {
   note: string | null;
   createdAt?: string | Date;
   updatedAt?: string | Date;
+}
+
+type AiSuggestionResult = Awaited<ReturnType<typeof suggestProductSafetyTextAction>>;
+
+interface ActiveAiProposal {
+  targetKey: string;
+  inputName: string;
+  inputDescription: string;
+  result: AiSuggestionResult;
 }
 
 export default function ProductsPage() {
@@ -101,6 +115,7 @@ export default function ProductsPage() {
   const [newProductForm, setNewProductForm] = useState({
     sku: '',
     name: '',
+    description: '',
     brand: '',
     price: '',
     safetyText: '',
@@ -108,6 +123,69 @@ export default function ProductsPage() {
     ean: '',
     note: '',
   });
+
+  // AI safety text assistant state
+  const aiRequestIdRef = React.useRef(0);
+  const [aiLoadingTarget, setAiLoadingTarget] = useState<string | null>(null);
+  const [aiProposal, setAiProposal] = useState<ActiveAiProposal | null>(null);
+  const [aiVerifyConfirmed, setAiVerifyConfirmed] = useState(false);
+
+  const invalidateAiProposal = () => {
+    aiRequestIdRef.current += 1;
+    setAiLoadingTarget(null);
+    setAiProposal(null);
+    setAiVerifyConfirmed(false);
+  };
+
+  const handleRequestAiSafety = async (
+    targetKey: string,
+    currentName: string,
+    currentDescription: string
+  ) => {
+    const reqId = aiRequestIdRef.current + 1;
+    aiRequestIdRef.current = reqId;
+    setAiLoadingTarget(targetKey);
+    setAiProposal(null);
+    setAiVerifyConfirmed(false);
+
+    try {
+      const res = await suggestProductSafetyTextAction({
+        name: currentName,
+        description: currentDescription,
+      });
+
+      // Pokud uživatel mezitím změnil název/popis, zavřel modál nebo poslal nový dotaz,
+      // starou odpověď zahodíme.
+      if (aiRequestIdRef.current !== reqId) {
+        return;
+      }
+
+      setAiProposal({
+        targetKey,
+        inputName: currentName,
+        inputDescription: currentDescription,
+        result: res,
+      });
+    } catch (err: unknown) {
+      if (aiRequestIdRef.current !== reqId) {
+        return;
+      }
+      setAiProposal({
+        targetKey,
+        inputName: currentName,
+        inputDescription: currentDescription,
+        result: {
+          ok: false,
+          errorType: 'unavailable',
+          error: err instanceof Error ? err.message : 'Nepodařilo se získat návrh bezpečnostního textu.',
+        },
+      });
+    } finally {
+      if (aiRequestIdRef.current === reqId) {
+        setAiLoadingTarget(null);
+      }
+    }
+  };
 
   // Load products from DB
   const loadProducts = async (query = '') => {
@@ -302,6 +380,7 @@ export default function ProductsPage() {
     const res = await updateProduct(editingProduct.id, {
       sku: editingProduct.sku,
       name: editingProduct.name,
+      description: editingProduct.description ?? null,
       brand: editingProduct.brand,
       price: isNaN(Number(priceNum)) ? null : priceNum,
       safetyText: editingProduct.safetyText,
@@ -312,6 +391,7 @@ export default function ProductsPage() {
 
     if (res.success) {
       setSuccessMessage(`Produkt "${editingProduct.name}" byl úspěšně upraven.`);
+      invalidateAiProposal();
       setEditingProduct(null);
       loadProducts(debouncedSearch);
     } else {
@@ -335,6 +415,7 @@ export default function ProductsPage() {
     const res = await createProduct({
       sku: newProductForm.sku,
       name: newProductForm.name,
+      description: newProductForm.description || null,
       brand: newProductForm.brand || null,
       price: priceNum && !isNaN(priceNum) ? priceNum : null,
       safetyText: newProductForm.safetyText || null,
@@ -345,10 +426,12 @@ export default function ProductsPage() {
 
     if (res.success) {
       setSuccessMessage(`Produkt "${newProductForm.name}" byl přidán.`);
+      invalidateAiProposal();
       setShowCreateModal(false);
       setNewProductForm({
         sku: '',
         name: '',
+        description: '',
         brand: '',
         price: '',
         safetyText: '',
@@ -394,6 +477,362 @@ export default function ProductsPage() {
     }
   };
 
+  // Render helper for the AI Safety Proposal box inside Edit or Create modal
+  const renderAiSafetyAssistant = (params: {
+    targetKey: string;
+    currentName: string;
+    currentDescription: string;
+    currentSafetyText: string;
+    onApplySafetyText: (newText: string) => void;
+  }) => {
+    const { targetKey, currentName, currentDescription, currentSafetyText, onApplySafetyText } = params;
+    const isLoading = aiLoadingTarget === targetKey;
+    const activeProposal =
+      aiProposal &&
+      aiProposal.targetKey === targetKey &&
+      aiProposal.inputName === currentName &&
+      aiProposal.inputDescription === currentDescription
+        ? aiProposal
+        : null;
+
+    if (!isLoading && !activeProposal) {
+      return null;
+    }
+
+    if (isLoading) {
+      return (
+        <div
+          data-testid="ai-safety-loading"
+          className="mt-2 p-4 rounded-xl border border-indigo-200 bg-indigo-50/60 flex items-center justify-between gap-3 text-xs text-indigo-900 animate-in fade-in duration-150"
+        >
+          <div className="flex items-center gap-2.5">
+            <RefreshCw className="w-4 h-4 text-indigo-600 animate-spin shrink-0" />
+            <div>
+              <span className="font-bold block">Lokální AI asistent analyzuje výrobek...</span>
+              <span className="text-[11px] text-indigo-700">
+                Klasifikuji podle aktuálně rozepsaného názvu a popisu přes lokální Ollamu.
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={invalidateAiProposal}
+            className="text-xs font-semibold text-indigo-700 hover:text-indigo-950 px-2.5 py-1 rounded-lg hover:bg-indigo-100/70 transition-colors"
+          >
+            Zrušit
+          </button>
+        </div>
+      );
+    }
+
+    if (!activeProposal) return null;
+    const res = activeProposal.result;
+    const availableCategories = ('categories' in res && Array.isArray(res.categories)) ? res.categories : [];
+
+    // Seskupení kategorií podle oblasti pro přehledný výběr v <select>
+    const selectableCategories = availableCategories.filter((c) => c.code !== 'NEURCENO');
+    const categoriesByArea = selectableCategories.reduce<Record<string, typeof selectableCategories>>((acc, cat) => {
+      const groupName = cat.area || 'Ostatní';
+      if (!acc[groupName]) acc[groupName] = [];
+      acc[groupName].push(cat);
+      return acc;
+    }, {});
+
+    const handleManualCategoryChange = (selectedCode: string) => {
+      if (!selectedCode) return;
+      const chosen = availableCategories.find((c) => c.code === selectedCode);
+      if (!chosen) return;
+      setAiVerifyConfirmed(false);
+      setAiProposal({
+        ...activeProposal,
+        result: {
+          ok: true,
+          code: chosen.code,
+          rawModelCode: res.ok ? res.rawModelCode : null,
+          usedFallback: false,
+          manuallySelected: true,
+          area: chosen.area,
+          productType: chosen.productType,
+          safetyText: chosen.safetyText,
+          mode: chosen.mode,
+          checkNote: chosen.checkNote,
+          clues: chosen.clues,
+          model: res.ok ? res.model : 'ruční výběr',
+          categories: availableCategories,
+        },
+      });
+    };
+
+    const renderManualCategorySelector = (prominent: boolean, currentCode?: string) => {
+      if (selectableCategories.length === 0) return null;
+      return (
+        <div
+          className={
+            prominent
+              ? 'p-3 rounded-lg bg-indigo-50/90 border border-indigo-200 space-y-1.5'
+              : 'pt-2 border-t border-indigo-100/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2'
+          }
+        >
+          <label className="block text-[11px] font-bold text-indigo-950">
+            {prominent
+              ? 'AI si není jistá? Vyberte kategorii výrobku ručně a vygenerujte text z tabulky:'
+              : 'Změnit kategorii výrobku ručně:'}
+          </label>
+          <select
+            data-testid="ai-manual-category-select"
+            value={currentCode && currentCode !== 'NEURCENO' ? currentCode : ''}
+            onChange={(e) => handleManualCategoryChange(e.target.value)}
+            className="w-full sm:w-auto sm:min-w-[280px] px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-white text-slate-800 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer"
+          >
+            <option value="">-- Zvolte kategorii výrobku ({selectableCategories.length} šablon) --</option>
+            {Object.entries(categoriesByArea).map(([areaName, items]) => (
+              <optgroup key={areaName} label={areaName}>
+                {items.map((item) => (
+                  <option key={item.code} value={item.code}>
+                    {item.productType} ({item.code})
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </div>
+      );
+    };
+
+    // Technická nebo validační chyba (nedostupná Ollama, chybějící model, timeout, prázdný název)
+    if (!res.ok) {
+      return (
+        <div
+          data-testid="ai-safety-error"
+          className="mt-2 p-4 rounded-xl border border-rose-200 bg-rose-50/80 text-rose-900 text-xs space-y-3 animate-in fade-in duration-150"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold block text-rose-950">Chyba při komunikaci s AI asistentem</span>
+                <p className="mt-0.5 text-rose-800 leading-relaxed">{res.error}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={invalidateAiProposal}
+              className="text-rose-400 hover:text-rose-700 p-1 rounded-lg"
+              title="Zavřít"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          {renderManualCategorySelector(true)}
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={invalidateAiProposal}
+              className="px-3 py-1.5 rounded-lg border border-rose-200 bg-white text-rose-700 font-semibold hover:bg-rose-50 transition-colors"
+            >
+              Zavřít
+            </button>
+            <button
+              type="button"
+              onClick={() => handleRequestAiSafety(targetKey, currentName, currentDescription)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold transition-colors"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Zkusit znovu
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // Úspěšná klasifikace z číselníku
+    const isApproveMode = res.mode === 'Návrh ke schválení';
+    const isVerifyMode = res.mode === 'Ověřit konkrétní výrobek';
+    const isManualMode = res.mode === 'Ruční posouzení';
+    const isSkipMode = res.mode === 'Přeskočit';
+    const canApply = isApproveMode || (isVerifyMode && aiVerifyConfirmed);
+    const hasExistingSafety = currentSafetyText.trim().length > 0;
+
+    const badgeClasses = isApproveMode
+      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+      : isVerifyMode
+      ? 'bg-amber-100 text-amber-850 border-amber-300'
+      : isManualMode
+      ? 'bg-rose-100 text-rose-800 border-rose-300'
+      : 'bg-slate-200 text-slate-700 border-slate-300';
+
+    return (
+      <div
+        data-testid="ai-safety-proposal"
+        className="mt-2 p-4 rounded-xl border border-indigo-200 bg-indigo-50/40 text-slate-800 text-xs space-y-3 animate-in fade-in duration-150"
+      >
+        {/* Header: Typ výrobku, Kód a Režim */}
+        <div className="flex items-start justify-between gap-3 border-b border-indigo-100 pb-2.5">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 font-bold text-indigo-950 text-sm">
+                <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+                {res.productType}
+              </span>
+              <span className="font-mono text-[10px] font-bold bg-white border border-slate-200 text-slate-600 px-1.5 py-0.5 rounded">
+                {res.code}
+              </span>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeClasses}`}>
+                Režim: {res.mode}
+              </span>
+              {res.manuallySelected && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200">
+                  Ručně zvolená kategorie
+                </span>
+              )}
+            </div>
+            {res.area && (
+              <p className="text-[11px] text-slate-500">
+                Oblast: <strong className="text-slate-700">{res.area}</strong>
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={invalidateAiProposal}
+            className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-white/60 transition-colors"
+            title="Zavřít návrh"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Pokyn "Co zkontrolovat" */}
+        {res.checkNote && (
+          <div className="p-2.5 rounded-lg bg-amber-50/90 border border-amber-200/90 text-amber-900 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold block text-[11px] uppercase tracking-wider text-amber-800">
+                Co zkontrolovat:
+              </span>
+              <p className="mt-0.5 leading-relaxed">{res.checkNote}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Režimy s navrhovaným textem ("Návrh ke schválení" a "Ověřit konkrétní výrobek") */}
+        {(isApproveMode || isVerifyMode) && (
+          <div className="space-y-2.5">
+            <div className={hasExistingSafety ? 'grid grid-cols-1 md:grid-cols-2 gap-2.5' : ''}>
+              <div className="p-3 rounded-lg bg-white border border-indigo-200 shadow-2xs">
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-indigo-600 mb-1">
+                  Navrhovaný bezpečnostní text z tabulky:
+                </span>
+                <p data-testid="ai-proposed-text" className="text-slate-900 font-medium leading-relaxed">
+                  {res.safetyText}
+                </p>
+              </div>
+
+              {hasExistingSafety && (
+                <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                    Stávající text ve formuláři (pro porovnání):
+                  </span>
+                  <p data-testid="ai-existing-text" className="text-slate-700 leading-relaxed">
+                    {currentSafetyText}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {isVerifyMode && (
+              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white border border-amber-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  data-testid="ai-verify-checkbox"
+                  checked={aiVerifyConfirmed}
+                  onChange={(e) => setAiVerifyConfirmed(e.target.checked)}
+                  className="mt-0.5 rounded border-amber-400 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                />
+                <span className="text-slate-800 font-semibold leading-snug">
+                  Potvrzuji, že jsem požadované údaje pro tento konkrétní výrobek ověřil(a) a navržený text odpovídá skutečnému výrobku.
+                </span>
+              </label>
+            )}
+
+            {renderManualCategorySelector(false, res.code)}
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={invalidateAiProposal}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 font-semibold hover:bg-slate-50 transition-colors"
+              >
+                Zavřít návrh
+              </button>
+              <button
+                type="button"
+                data-testid="ai-apply-proposal-btn"
+                disabled={!canApply}
+                onClick={() => {
+                  if (!canApply) return;
+                  onApplySafetyText(res.safetyText);
+                  invalidateAiProposal();
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold shadow-xs transition-all"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                Použít návrh
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Režim "Ruční posouzení" */}
+        {isManualMode && (
+          <div className="space-y-2.5">
+            {renderManualCategorySelector(true, res.code)}
+            <div className="p-3 rounded-lg bg-white border border-rose-200 text-slate-800">
+              <p className="font-semibold text-rose-900">
+                Pro tuto kategorii ({res.productType}) se automatický text nevkládá – vyžaduje ruční posouzení.
+              </p>
+              <p className="text-slate-600 mt-1">
+                Pokud víte, o jaký typ výrobku jde, vyberte kategorii v rozbalovacím seznamu výše a text z tabulky se ihned zobrazí ke schválení. Případně doplňte text ručně podle obalu či bezpečnostního listu.
+              </p>
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={invalidateAiProposal}
+                className="px-3.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 font-semibold hover:bg-slate-50 transition-colors"
+              >
+                Rozumím, zavřít
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Režim "Přeskočit" */}
+        {isSkipMode && (
+          <div className="space-y-2.5">
+            <div className="p-3 rounded-lg bg-white border border-slate-200 text-slate-800">
+              <p className="font-semibold text-slate-900">
+                Pro tuto položku ({res.productType}) se bezpečnostní etiketa nenavrhuje.
+              </p>
+              <p className="text-slate-600 mt-1">
+                Existující bezpečnostní text ve formuláři byl ponechán beze změny.
+              </p>
+            </div>
+            {renderManualCategorySelector(false, res.code)}
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={invalidateAiProposal}
+                className="px-3.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 font-semibold hover:bg-slate-50 transition-colors"
+              >
+                Zavřít
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
   // Trigger search on typing (handled via debounce effect)
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(e.target.value);
@@ -415,7 +854,10 @@ export default function ProductsPage() {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setShowCreateModal(true)}
+            onClick={() => {
+              invalidateAiProposal();
+              setShowCreateModal(true);
+            }}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-md shadow-indigo-600/10 transition-all duration-200"
           >
             <Plus className="w-4 h-4" />
@@ -751,7 +1193,10 @@ export default function ProductsPage() {
                     <td className="px-6 py-4 text-right">
                       <div className="flex justify-end gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
                         <button
-                          onClick={() => setEditingProduct(prod)}
+                          onClick={() => {
+                            invalidateAiProposal();
+                            setEditingProduct(prod);
+                          }}
                           title="Upravit produkt"
                           className="p-1.5 hover:bg-slate-100 text-slate-600 hover:text-indigo-600 rounded-lg transition-colors"
                         >
@@ -858,21 +1303,25 @@ export default function ProductsPage() {
       {/* EDIT MODAL */}
       {editingProduct && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl overflow-hidden border border-slate-100 animate-in zoom-in-95 duration-200">
-            <div className="bg-slate-900 text-white p-5 flex items-center justify-between">
+          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden border border-slate-100 animate-in zoom-in-95 duration-200">
+            <div className="bg-slate-900 text-white p-5 flex items-center justify-between shrink-0">
               <div>
                 <h3 className="font-bold text-lg">Upravit detaily produktu</h3>
                 <p className="text-xs text-slate-400 mt-0.5">ID: {editingProduct.id.substring(0, 8)}...</p>
               </div>
               <button
-                onClick={() => setEditingProduct(null)}
+                type="button"
+                onClick={() => {
+                  invalidateAiProposal();
+                  setEditingProduct(null);
+                }}
                 className="p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleEditSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleEditSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-650 mb-1 uppercase tracking-wider">SKU / Kód produktu *</label>
@@ -890,7 +1339,10 @@ export default function ProductsPage() {
                     type="text"
                     required
                     value={editingProduct.name}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })}
+                    onChange={(e) => {
+                      invalidateAiProposal();
+                      setEditingProduct({ ...editingProduct, name: e.target.value });
+                    }}
                     className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none"
                   />
                 </div>
@@ -923,7 +1375,7 @@ export default function ProductsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-650 mb-1 uppercase tracking-wider">Poznámka</label>
+                  <label className="block text-xs font-bold text-slate-650 mb-1 uppercase tracking-wider">Poznámka (interní)</label>
                   <input
                     type="text"
                     value={editingProduct.note || ''}
@@ -934,13 +1386,53 @@ export default function ProductsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-650 mb-1 uppercase tracking-wider">Bezpečnostní informace</label>
+                <label className="block text-xs font-bold text-slate-650 mb-1 uppercase tracking-wider">Popis produktu (podklad pro AI klasifikaci)</label>
                 <textarea
-                  rows={2}
+                  rows={3}
+                  placeholder="Popis produktu z e-shopu nebo ruční upřesnění typu výrobku..."
+                  value={editingProduct.description || ''}
+                  onChange={(e) => {
+                    invalidateAiProposal();
+                    setEditingProduct({ ...editingProduct, description: e.target.value || null });
+                  }}
+                  className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                  <label className="block text-xs font-bold text-slate-650 uppercase tracking-wider">Bezpečnostní informace</label>
+                  <button
+                    type="button"
+                    data-testid="ai-suggest-btn-edit"
+                    disabled={aiLoadingTarget === `edit:${editingProduct.id}` || !editingProduct.name.trim()}
+                    onClick={() =>
+                      handleRequestAiSafety(
+                        `edit:${editingProduct.id}`,
+                        editingProduct.name,
+                        editingProduct.description || ''
+                      )
+                    }
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-3 py-1 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                    Navrhnout bezpečnostní text
+                  </button>
+                </div>
+                <textarea
+                  rows={3}
                   value={editingProduct.safetyText || ''}
                   onChange={(e) => setEditingProduct({ ...editingProduct, safetyText: e.target.value || null })}
                   className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none"
                 />
+                {renderAiSafetyAssistant({
+                  targetKey: `edit:${editingProduct.id}`,
+                  currentName: editingProduct.name,
+                  currentDescription: editingProduct.description || '',
+                  currentSafetyText: editingProduct.safetyText || '',
+                  onApplySafetyText: (newText) =>
+                    setEditingProduct((prev) => (prev ? { ...prev, safetyText: newText } : null)),
+                })}
               </div>
 
               <div>
@@ -956,7 +1448,10 @@ export default function ProductsPage() {
               <div className="pt-4 border-t border-slate-100 flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setEditingProduct(null)}
+                  onClick={() => {
+                    invalidateAiProposal();
+                    setEditingProduct(null);
+                  }}
                   className="text-sm font-semibold text-slate-550 px-4 py-2 hover:bg-slate-50 border border-slate-150 rounded-xl"
                 >
                   Zrušit
@@ -976,21 +1471,25 @@ export default function ProductsPage() {
       {/* CREATE MODAL */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl overflow-hidden border border-slate-100 animate-in zoom-in-95 duration-200">
-            <div className="bg-slate-900 text-white p-5 flex items-center justify-between">
+          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden border border-slate-100 animate-in zoom-in-95 duration-200">
+            <div className="bg-slate-900 text-white p-5 flex items-center justify-between shrink-0">
               <div>
                 <h3 className="font-bold text-lg">Nový produkt</h3>
                 <p className="text-xs text-slate-400 mt-0.5">Vytvoření nové karty produktu do katalogu</p>
               </div>
               <button
-                onClick={() => setShowCreateModal(false)}
+                type="button"
+                onClick={() => {
+                  invalidateAiProposal();
+                  setShowCreateModal(false);
+                }}
                 className="p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleCreateSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-650 mb-1 uppercase tracking-wider">SKU / Kód produktu *</label>
@@ -1010,7 +1509,10 @@ export default function ProductsPage() {
                     required
                     placeholder="Např: Čisticí utěrky univerzální"
                     value={newProductForm.name}
-                    onChange={(e) => setNewProductForm({ ...newProductForm, name: e.target.value })}
+                    onChange={(e) => {
+                      invalidateAiProposal();
+                      setNewProductForm({ ...newProductForm, name: e.target.value });
+                    }}
                     className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none"
                   />
                 </div>
@@ -1046,7 +1548,7 @@ export default function ProductsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-650 mb-1 uppercase tracking-wider">Poznámka</label>
+                  <label className="block text-xs font-bold text-slate-650 mb-1 uppercase tracking-wider">Poznámka (interní)</label>
                   <input
                     type="text"
                     placeholder="Interní info"
@@ -1058,14 +1560,50 @@ export default function ProductsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-650 mb-1 uppercase tracking-wider">Bezpečnostní informace</label>
+                <label className="block text-xs font-bold text-slate-650 mb-1 uppercase tracking-wider">Popis produktu (podklad pro AI klasifikaci)</label>
                 <textarea
-                  rows={2}
+                  rows={3}
+                  placeholder="Popis produktu z e-shopu nebo ruční upřesnění typu výrobku..."
+                  value={newProductForm.description}
+                  onChange={(e) => {
+                    invalidateAiProposal();
+                    setNewProductForm({ ...newProductForm, description: e.target.value });
+                  }}
+                  className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                  <label className="block text-xs font-bold text-slate-650 uppercase tracking-wider">Bezpečnostní informace</label>
+                  <button
+                    type="button"
+                    data-testid="ai-suggest-btn-create"
+                    disabled={aiLoadingTarget === 'create' || !newProductForm.name.trim()}
+                    onClick={() =>
+                      handleRequestAiSafety('create', newProductForm.name, newProductForm.description)
+                    }
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-3 py-1 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                    Navrhnout bezpečnostní text
+                  </button>
+                </div>
+                <textarea
+                  rows={3}
                   placeholder="Bezpečnostní pokyny pro tisk na štítek..."
                   value={newProductForm.safetyText}
                   onChange={(e) => setNewProductForm({ ...newProductForm, safetyText: e.target.value })}
                   className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none"
                 />
+                {renderAiSafetyAssistant({
+                  targetKey: 'create',
+                  currentName: newProductForm.name,
+                  currentDescription: newProductForm.description,
+                  currentSafetyText: newProductForm.safetyText,
+                  onApplySafetyText: (newText) =>
+                    setNewProductForm((prev) => ({ ...prev, safetyText: newText })),
+                })}
               </div>
 
               <div>
@@ -1082,7 +1620,10 @@ export default function ProductsPage() {
               <div className="pt-4 border-t border-slate-100 flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={() => {
+                    invalidateAiProposal();
+                    setShowCreateModal(false);
+                  }}
                   className="text-sm font-semibold text-slate-550 px-4 py-2 hover:bg-slate-50 border border-slate-150 rounded-xl"
                 >
                   Zrušit

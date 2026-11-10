@@ -12,6 +12,7 @@ export async function GET(req: NextRequest) {
     const rows = products.map((p) => ({
       'Kód (SKU)': p.sku,
       'Název': p.name,
+      'Popis': p.description || '',
       'Značka': p.brand || '',
       'Cena': p.price !== null && p.price !== undefined ? p.price : '',
       'Bezpečnostní text': p.safetyText || '',
@@ -28,6 +29,7 @@ export async function GET(req: NextRequest) {
     const colWidths = [
       { wch: 15 }, // SKU
       { wch: 45 }, // Název
+      { wch: 50 }, // Popis
       { wch: 15 }, // Značka
       { wch: 10 }, // Cena
       { wch: 50 }, // Bezpečnostní text
