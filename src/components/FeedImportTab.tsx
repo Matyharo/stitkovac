@@ -268,9 +268,13 @@ export default function FeedImportTab({ onPendingCountChange }: { onPendingCount
     return true;
   });
 
-  // Skutečný stav feedu podle toho, zda čekají nějaké položky
+  // Skutečný stav feedu podle toho, zda čekají nějaké položky nebo zda je synchronizace starší než 24 h
   const hasPendingItems = pendingItems.length > 0;
   const isSyncSuccess = !hasPendingItems && config?.syncStatus !== 'error';
+  const SYNC_STALE_MS = 24 * 60 * 60 * 1000;
+  const isSyncStale =
+    !config?.lastSyncAt ||
+    new Date().getTime() - new Date(config.lastSyncAt).getTime() > SYNC_STALE_MS;
 
   if (loading) {
     return (
@@ -316,28 +320,36 @@ export default function FeedImportTab({ onPendingCountChange }: { onPendingCount
                 Shoptet Live Feed
               </span>
 
-              {/* Dynamický stav: pokud nic nečeká, svítí zeleně */}
+              {/* Dynamický stav: pokud nic nečeká a poslední synchronizace není starší než 24 h, svítí zeleně */}
               {hasPendingItems ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300">
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
                   Vyžaduje kontrolu ({pendingItems.length})
-                </span>
-              ) : isSyncSuccess ? (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                  Vše synchronizováno
                 </span>
               ) : config?.syncStatus === 'running' ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                   Právě probíhá...
                 </span>
-              ) : (
+              ) : config?.syncStatus === 'error' ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
                   <AlertTriangle className="w-3.5 h-3.5" />
                   Chyba synchronizace
                 </span>
-              )}
+              ) : isSyncStale ? (
+                <span
+                  data-testid="sync-stale-warning"
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                  {config?.lastSyncAt ? 'Synchronizace je starší než 24 hodin' : 'Čeká na první synchronizaci'}
+                </span>
+              ) : isSyncSuccess ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  Vše synchronizováno
+                </span>
+              ) : null}
             </div>
 
             <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">

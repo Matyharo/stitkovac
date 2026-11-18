@@ -4,6 +4,7 @@ import React from 'react';
 
 export interface ProductData {
   name: string;
+  shortName?: string | null;
   sku: string;
   brand?: string | null;
   price?: number | null;
@@ -120,7 +121,7 @@ export function LabelPreview({ fields, fonts, layout, product: customProduct }: 
         )}
 
         {/* Name */}
-        {fields.showName && product.name && (
+        {fields.showName && (product.shortName?.trim() || product.name) && (
           <div 
             style={{
               fontSize: toCqw(fonts.nameFontSize),
@@ -134,7 +135,7 @@ export function LabelPreview({ fields, fonts, layout, product: customProduct }: 
             }}
             className="overflow-hidden leading-tight"
           >
-            {product.name}
+            {product.shortName?.trim() || product.name}
           </div>
         )}
 

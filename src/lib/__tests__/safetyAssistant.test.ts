@@ -11,6 +11,7 @@ import {
   stripHtmlToPlainText,
   buildClassifierSystemPrompt,
   classifyProductSafety,
+  shortenProductNameForLabel,
 } from '../safetyClassifier';
 
 describe('Safety Templates Excel Loader & Validator', () => {
@@ -245,6 +246,41 @@ describe('Safety Classifier (Simulated Ollama Responses - Offline)', () => {
     if (!resNotFound.ok) {
       expect(resNotFound.errorType).toBe('model_not_found');
       expect(resNotFound.error).toContain('ollama pull');
+    }
+  });
+
+  it('shortens long product names via mocked Ollama JSON output and handles unavailable model', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        message: {
+          content: JSON.stringify({ shortName: 'Hydratační sérum na řasy 15 ml' }),
+        },
+      }),
+    });
+
+    const okResult = await shortenProductNameForLabel(
+      {
+        name: 'Profesionální hloubkově hydratační a regenerační sérum pro výživu řas a obočí po laminaci 15 ml',
+        brand: 'MAXYMOVA',
+        maxChars: 42,
+      },
+      { fetchImpl: mockFetch as unknown as typeof fetch }
+    );
+
+    expect(okResult.ok).toBe(true);
+    if (okResult.ok) {
+      expect(okResult.shortName).toBe('Hydratační sérum na řasy 15 ml');
+    }
+
+    const failFetch = vi.fn().mockRejectedValue(new Error('fetch failed: ECONNREFUSED'));
+    const errResult = await shortenProductNameForLabel(
+      { name: 'Dlouhý název produktu' },
+      { fetchImpl: failFetch as unknown as typeof fetch }
+    );
+    expect(errResult.ok).toBe(false);
+    if (!errResult.ok) {
+      expect(errResult.errorType).toBe('unavailable');
     }
   });
 });

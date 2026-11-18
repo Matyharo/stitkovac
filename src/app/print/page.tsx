@@ -2,10 +2,18 @@
 
 import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
-import { getProducts, getTemplates, savePrintJob, getPrintJobById, updateProduct } from '@/app/actions';
+import {
+  getProducts,
+  getTemplates,
+  savePrintJob,
+  getPrintJobById,
+  updateProduct,
+  shortenAndSaveProductNameAction
+} from '@/app/actions';
 import {
   generateLabelsPdf,
   detectSafetyTextOverflows,
+  findOptimalFontSizes,
   LabelOverflowDetail,
   PrintItem
 } from '@/lib/pdfGenerator';
@@ -33,6 +41,7 @@ interface Product {
   id: string;
   sku: string;
   name: string;
+  shortName?: string | null;
   brand: string | null;
   price: number | null;
   safetyText: string | null;
@@ -84,8 +93,68 @@ function PrintPageContent() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
-  // State for safety text overflow detection before export
+  // State for safety text overflow detection & auto-optimization before export
   const [overflowItems, setOverflowItems] = useState<LabelOverflowDetail[]>([]);
+  const [autoFitting, setAutoFitting] = useState(false);
+  const [shorteningProductId, setShorteningProductId] = useState<string | null>(null);
+
+  const handleAutoFitFonts = async () => {
+    const tpl = templates.find((t) => t.id === selectedTemplateId);
+    if (!tpl || printList.length === 0) return;
+
+    setAutoFitting(true);
+    setError(null);
+    try {
+      const res = await findOptimalFontSizes(printList, tpl, customFontSizes);
+      setCustomFontSizes(res.fontSizes);
+      setPdfUrl(null);
+      if (res.fitted) {
+        setSuccess('Velikosti písma byly automaticky upraveny tak, aby se všechny texty na štítek vešly.');
+      } else {
+        setError(
+          'Písmo bylo zmenšeno na nejmenší ještě čitelnou velikost, ale některé položky stále přetékají (zkuste zkrátit název pomocí AI nebo upravit šablonu).'
+        );
+      }
+    } catch {
+      setError('Nepodařilo se automaticky vypočítat velikosti písma.');
+    } finally {
+      setAutoFitting(false);
+    }
+  };
+
+  const handleAiShortenName = async (ov: LabelOverflowDetail) => {
+    const target = printList.find((p) => p.id === ov.id) || allProducts.find((p) => p.id === ov.id);
+    if (!target) return;
+
+    setShorteningProductId(ov.id);
+    setError(null);
+    try {
+      const res = await shortenAndSaveProductNameAction({
+        productId: target.id,
+        name: target.name,
+        brand: target.brand,
+        maxChars: 42,
+      });
+
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+
+      setPrintList((prev) =>
+        prev.map((p) => (p.id === target.id ? { ...p, shortName: res.shortName } : p))
+      );
+      setAllProducts((prev) =>
+        prev.map((p) => (p.id === target.id ? { ...p, shortName: res.shortName } : p))
+      );
+      setPdfUrl(null);
+      setSuccess(`Zkrácený název „${res.shortName}“ byl uložen k produktu ${target.sku}.`);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Nepodařilo se zkrátit název pomocí AI.');
+    } finally {
+      setShorteningProductId(null);
+    }
+  };
 
   const handleQuickEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,6 +168,7 @@ function PrintPageContent() {
     const res = await updateProduct(editingProduct.id, {
       sku: editingProduct.sku,
       name: editingProduct.name,
+      shortName: editingProduct.shortName,
       brand: editingProduct.brand,
       price: isNaN(Number(priceNum)) ? null : priceNum,
       safetyText: editingProduct.safetyText,
@@ -213,8 +283,31 @@ function PrintPageContent() {
     loadData();
   }, []);
 
-  // Load print job if loadJob param is present in URL
+  // Load print job if loadJob param is present in URL, or pre-select product if productId/sku is present
   useEffect(() => {
+    const productIdParam = searchParams.get('productId');
+    const skuParam = searchParams.get('sku');
+    if ((productIdParam || skuParam) && allProducts.length > 0) {
+      const targetProd = allProducts.find(
+        (p) => (productIdParam && p.id === productIdParam) || (skuParam && p.sku === skuParam)
+      );
+      if (targetProd) {
+        setPrintList((prev) => {
+          const existing = prev.find((item) => item.id === targetProd.id);
+          if (existing) {
+            return prev;
+          }
+          return [...prev, { ...targetProd, quantity: 1 }];
+        });
+        setSuccess(`Produkt "${targetProd.name}" byl přidán k tisku.`);
+      } else {
+        setError('Vybraný produkt nebyl v katalogu nalezen.');
+      }
+      const newUrl = window.location.pathname;
+      window.history.replaceState({ path: newUrl }, '', newUrl);
+      return;
+    }
+
     const jobId = searchParams.get('loadJob');
     if (!jobId || templates.length === 0 || allProducts.length === 0) return;
 
@@ -514,75 +607,6 @@ function PrintPageContent() {
             </button>
           </div>
         )}
-
-        {overflowItems.length > 0 && (
-          <div
-            data-testid="safety-overflow-warning"
-            className="mt-3 p-4 bg-amber-50 border border-amber-300 text-amber-950 rounded-2xl space-y-3 animate-in fade-in duration-200"
-          >
-            <div className="flex flex-col md:flex-row md:items-start justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                <div>
-                  <h4 className="font-bold text-sm text-amber-950">
-                    Upozornění před exportem: U {overflowItems.length}{' '}
-                    {overflowItems.length === 1 ? 'položky' : 'položek'} se celý text nevejde do zvolené šablony
-                  </h4>
-                  <p className="text-xs text-amber-800 mt-0.5 leading-relaxed">
-                    Podle skutečných rozměrů šablony <strong>{templateConfig?.name}</strong>, fontu Roboto a zalomení řádků v PDF dochází k oříznutí textu u těchto SKU:
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPdfUrl(null);
-                    setCustomFontSizes((prev) => ({
-                      ...prev,
-                      nameFontSize: Math.max(6, Number((prev.nameFontSize - 1).toFixed(1))),
-                      bodyFontSize: Math.max(4, Number((prev.bodyFontSize - 1).toFixed(1))),
-                      priceFontSize: Math.max(7, Number((prev.priceFontSize - 1).toFixed(1))),
-                    }));
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-amber-100/70 text-amber-900 border border-amber-300 text-xs font-bold transition-colors cursor-pointer"
-                >
-                  Zmenšit písmo pro tuto dávku
-                </button>
-                <Link
-                  href="/templates"
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors shadow-2xs"
-                >
-                  <Settings className="w-3.5 h-3.5" />
-                  Upravit šablonu etiket
-                </Link>
-              </div>
-            </div>
-
-            <ul className="space-y-1.5 pl-8 text-xs list-disc text-amber-900">
-              {overflowItems.map((ov) => (
-                <li key={ov.id} className="leading-snug">
-                  <span className="font-mono font-bold bg-white/90 border border-amber-300 px-1.5 py-0.5 rounded mr-1.5">
-                    SKU: {ov.sku}
-                  </span>
-                  <strong className="text-amber-950">{ov.name}</strong> —{' '}
-                  {ov.safetyTextClipped ? (
-                    <span>
-                      vejde se jen <strong>{ov.fittingSafetyLines} z {ov.totalSafetyLines}</strong> řádků bezpečnostního textu
-                    </span>
-                  ) : (
-                    <span>
-                      bezpečnostní text ({ov.totalSafetyLines} řádků) vytlačuje pole mimo spodní okraj štítku
-                    </span>
-                  )}{' '}
-                  <span className="text-amber-800">
-                    (nevejde se: {ov.clippedFields.join(', ')})
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
       </div>
 
       {/* LEFT COLUMN: Queue & Selection (7 cols) */}
@@ -712,6 +736,7 @@ function PrintPageContent() {
                         layout={layout}
                         product={{
                           name: previewProduct.name,
+                          shortName: previewProduct.shortName,
                           sku: previewProduct.sku,
                           brand: previewProduct.brand,
                           price: previewProduct.price,
@@ -747,7 +772,7 @@ function PrintPageContent() {
                             </div>
                             <input
                               type="range"
-                              min="4"
+                              min="3"
                               max="24"
                               step="0.5"
                               value={customFontSizes.nameFontSize}
@@ -809,7 +834,7 @@ function PrintPageContent() {
                               </div>
                               <input
                                 type="range"
-                                min="4"
+                                min="3"
                                 max="24"
                                 step="0.5"
                                 value={customFontSizes.priceFontSize}
@@ -864,6 +889,90 @@ function PrintPageContent() {
                   </div>
                 );
               })()}
+
+              {overflowItems.length > 0 && (
+                <div
+                  data-testid="safety-overflow-warning"
+                  className="mt-4 p-3.5 bg-amber-50 border border-amber-300 text-amber-950 rounded-xl space-y-2.5 animate-in fade-in duration-200"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <h4 className="font-bold text-xs text-amber-950">
+                        Text přetéká u {overflowItems.length}{' '}
+                        {overflowItems.length === 1 ? 'položky' : 'položek'}
+                      </h4>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleAutoFitFonts}
+                        disabled={autoFitting}
+                        data-testid="auto-fit-fonts-btn"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white hover:bg-amber-100/70 text-amber-900 border border-amber-300 text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        {autoFitting ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-3 h-3 text-amber-600" />
+                        )}
+                        Automaticky upravit písmo
+                      </button>
+                      <Link
+                        href="/templates"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold transition-colors"
+                      >
+                        <Settings className="w-3 h-3" />
+                        Šablona
+                      </Link>
+                    </div>
+                  </div>
+
+                  <ul className="space-y-1.5 text-xs text-amber-900">
+                    {overflowItems.map((ov) => (
+                      <li key={ov.id} className="flex flex-wrap items-center gap-1.5 leading-snug">
+                        <span className="font-mono font-bold bg-white/90 border border-amber-300 px-1.5 py-0.5 rounded text-[11px]">
+                          {ov.sku}
+                        </span>
+                        <strong className="text-amber-950 truncate max-w-[240px]" title={ov.shortName || ov.name}>
+                          {ov.shortName || ov.name}
+                        </strong>
+                        <span className="text-amber-800">
+                          —{' '}
+                          {ov.safetyTextClipped ? (
+                            <>vejde se {ov.fittingSafetyLines}/{ov.totalSafetyLines} řádků bezp. textu</>
+                          ) : ov.nameExceedsTwoLines && !ov.hasVerticalOverflow ? (
+                            <>název má {ov.nameWrappedLines} řádky (max. 2)</>
+                          ) : (
+                            <>nevejde se: {ov.clippedFields.join(', ')}</>
+                          )}
+                        </span>
+                        {ov.nameExceedsTwoLines && (
+                          <button
+                            type="button"
+                            onClick={() => handleAiShortenName(ov)}
+                            disabled={shorteningProductId === ov.id}
+                            data-testid={`ai-shorten-name-${ov.sku}`}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            {shorteningProductId === ov.id ? (
+                              <>
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                Zkracuji...
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="w-3 h-3" />
+                                Zkrátit název AI
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1032,6 +1141,7 @@ function PrintPageContent() {
                                 id: item.id,
                                 sku: item.sku,
                                 name: item.name,
+                                shortName: item.shortName ?? null,
                                 brand: item.brand ?? null,
                                 price: item.price ?? null,
                                 safetyText: item.safetyText ?? null,
@@ -1273,6 +1383,19 @@ function PrintPageContent() {
                     required
                     value={editingProduct.name}
                     onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+                    Zkrácený název pro etiketu (max 2 řádky, volitelné)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Pokud zůstane prázdné, použije se plný název produktu"
+                    value={editingProduct.shortName || ''}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, shortName: e.target.value || null })}
                     className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all"
                   />
                 </div>

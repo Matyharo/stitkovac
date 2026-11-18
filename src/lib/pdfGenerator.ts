@@ -21,6 +21,7 @@ export interface PrintItem {
   id: string;
   sku: string;
   name: string;
+  shortName?: string | null;
   brand?: string | null;
   price?: number | null;
   safetyText?: string | null;
@@ -42,11 +43,27 @@ export interface LabelOverflowDetail {
   id: string;
   sku: string;
   name: string;
+  shortName: string | null;
   overflows: boolean;
+  hasVerticalOverflow: boolean;
+  nameWrappedLines: number;
+  nameExceedsTwoLines: boolean;
   totalSafetyLines: number;
   fittingSafetyLines: number;
   safetyTextClipped: boolean;
   clippedFields: string[];
+}
+
+export interface AutoFitFontResult {
+  fitted: boolean;
+  changed: boolean;
+  fontSizes: Required<FontOverrides>;
+  remainingOverflows: LabelOverflowDetail[];
+}
+
+export function getEffectiveLabelName(product: { name: string; shortName?: string | null }): string {
+  const customShort = product.shortName?.trim();
+  return customShort || product.name || '';
 }
 
 export interface CustomIconConfig {
@@ -126,20 +143,31 @@ function getAlignX(blockW: number, contentW: number, alignment: 'left'|'center'|
 function wrapText(text: string, maxWidth: number, font: PDFFont, fontSize: number): string[] {
   if (!text) return [];
   const words = text.split(/\s+/).filter(Boolean);
+  // Rozložíme slova se spojovníkem/lomítkem (např. "PRO-REGENERATIVE" -> ["PRO-", "REGENERATIVE"]),
+  // aby se PDF zalamovalo stejně jako prohlížeč v náhledu.
+  const tokens: Array<{ text: string; leadingSpace: boolean }> = [];
+  for (const word of words) {
+    const parts = word.split(/(?<=[-/])(?=.)/).filter(Boolean);
+    parts.forEach((part, idx) => {
+      tokens.push({ text: part, leadingSpace: idx === 0 });
+    });
+  }
+
   const lines: string[] = [];
   let cur = '';
-  for (const word of words) {
-    const test = cur ? `${cur} ${word}` : word;
+  for (const token of tokens) {
+    const sep = cur && token.leadingSpace ? ' ' : '';
+    const test = `${cur}${sep}${token.text}`;
     if (font.widthOfTextAtSize(test, fontSize) <= maxWidth) {
       cur = test;
     } else {
       if (cur) lines.push(cur);
-      if (font.widthOfTextAtSize(word, fontSize) <= maxWidth) {
-        cur = word;
+      if (font.widthOfTextAtSize(token.text, fontSize) <= maxWidth) {
+        cur = token.text;
       } else {
         // Force-break at character level
         let partial = '';
-        for (const ch of word) {
+        for (const ch of token.text) {
           if (font.widthOfTextAtSize(partial + ch, fontSize) <= maxWidth) {
             partial += ch;
           } else {
@@ -216,9 +244,10 @@ function drawLabelContent(
   }
 
   // 2. Product name (≤ 2 lines)
-  if (fields.showName && product.name) {
+  const displayName = getEffectiveLabelName(product);
+  if (fields.showName && displayName) {
     const sz    = fonts.nameFontSize || 9.5;
-    const lines = wrapText(product.name, contentW, boldFont, sz);
+    const lines = wrapText(displayName, contentW, boldFont, sz);
     const draw  = lines.slice(0, 2);
     if (lines.length > 2) draw[1] = draw[1].slice(0, Math.max(0, draw[1].length-3)) + '...';
     for (const line of draw) {
@@ -637,12 +666,16 @@ export function measureSingleLabelOverflow(
   const fonts: FontConfig = { ...JSON.parse(template.fontConfig), ...fontOverrides };
   const layout = JSON.parse(template.layoutConfig);
 
-  if (layout.sixIconsLayout || !fields.showSafetyText || !product.safetyText?.trim()) {
+  if (layout.sixIconsLayout) {
     return {
       id: product.id,
       sku: product.sku,
       name: product.name,
+      shortName: product.shortName ?? null,
       overflows: false,
+      hasVerticalOverflow: false,
+      nameWrappedLines: 0,
+      nameExceedsTwoLines: false,
       totalSafetyLines: 0,
       fittingSafetyLines: 0,
       safetyTextClipped: false,
@@ -673,6 +706,9 @@ export function measureSingleLabelOverflow(
   const minY = padding;
 
   const clippedFields: string[] = [];
+  let hasVerticalOverflow = false;
+  let nameWrappedLines = 0;
+  let nameExceedsTwoLines = false;
 
   // 1. Brand
   if (fields.showBrand && product.brand) {
@@ -682,9 +718,12 @@ export function measureSingleLabelOverflow(
   }
 
   // 2. Product name (≤ 2 lines)
-  if (fields.showName && product.name) {
+  const displayName = getEffectiveLabelName(product);
+  if (fields.showName && displayName) {
     const sz = fonts.nameFontSize || 9.5;
-    const lines = wrapText(product.name, contentW, boldFont, sz);
+    const lines = wrapText(displayName, contentW, boldFont, sz);
+    nameWrappedLines = lines.length;
+    nameExceedsTwoLines = lines.length > 2;
     const draw = lines.slice(0, 2);
     let drawnNameLines = 0;
     for (let i = 0; i < draw.length; i++) {
@@ -694,7 +733,10 @@ export function measureSingleLabelOverflow(
       currentY -= 1.5;
     }
     if (drawnNameLines < draw.length) {
+      hasVerticalOverflow = true;
       clippedFields.push('Název produktu');
+    } else if (nameExceedsTwoLines) {
+      clippedFields.push('Název produktu (přes 2 řádky)');
     }
     currentY -= 2;
   }
@@ -716,28 +758,35 @@ export function measureSingleLabelOverflow(
       currentY -= csz;
       currentY -= 3;
     } else {
+      hasVerticalOverflow = true;
       clippedFields.push('SKU / EAN');
     }
   }
 
   // 4. Safety text
-  const safetySz = fonts.bodyFontSize || 6;
-  const safetyIconW = fields.showSafetyIcon && !isRotated ? 11 : 0;
-  const safetyAvW = contentW - (alignment === 'left' ? safetyIconW : 0);
-  const safetyLines = wrapText(product.safetyText, safetyAvW, regularFont, safetySz);
+  let safetyLines: string[] = [];
   let fittingSafetyLines = 0;
+  let safetyTextClipped = false;
 
-  for (let i = 0; i < safetyLines.length; i++) {
-    if (currentY - safetySz < minY) break;
-    fittingSafetyLines++;
-    currentY -= safetySz;
-    currentY -= 1.5;
-  }
-  currentY -= 2.5;
+  if (fields.showSafetyText && product.safetyText?.trim()) {
+    const safetySz = fonts.bodyFontSize || 6;
+    const safetyIconW = fields.showSafetyIcon && !isRotated ? 11 : 0;
+    const safetyAvW = contentW - (alignment === 'left' ? safetyIconW : 0);
+    safetyLines = wrapText(product.safetyText, safetyAvW, regularFont, safetySz);
 
-  const safetyTextClipped = fittingSafetyLines < safetyLines.length;
-  if (safetyTextClipped) {
-    clippedFields.push('Bezpečnostní text');
+    for (let i = 0; i < safetyLines.length; i++) {
+      if (currentY - safetySz < minY) break;
+      fittingSafetyLines++;
+      currentY -= safetySz;
+      currentY -= 1.5;
+    }
+    currentY -= 2.5;
+
+    safetyTextClipped = fittingSafetyLines < safetyLines.length;
+    if (safetyTextClipped) {
+      hasVerticalOverflow = true;
+      clippedFields.push('Bezpečnostní text');
+    }
   }
 
   // 5. Price
@@ -747,6 +796,7 @@ export function measureSingleLabelOverflow(
       currentY -= psz;
       currentY -= 4;
     } else {
+      hasVerticalOverflow = true;
       clippedFields.push('Cena');
     }
   }
@@ -775,17 +825,22 @@ export function measureSingleLabelOverflow(
     }
 
     if (fittingContactLines < totalContactLines) {
+      hasVerticalOverflow = true;
       clippedFields.push('Kontaktní údaje');
     }
   }
 
-  const overflows = safetyTextClipped || clippedFields.length > 0;
+  const overflows = hasVerticalOverflow || nameExceedsTwoLines;
 
   return {
     id: product.id,
     sku: product.sku,
     name: product.name,
+    shortName: product.shortName ?? null,
     overflows,
+    hasVerticalOverflow,
+    nameWrappedLines,
+    nameExceedsTwoLines,
     totalSafetyLines: safetyLines.length,
     fittingSafetyLines,
     safetyTextClipped,
@@ -794,7 +849,7 @@ export function measureSingleLabelOverflow(
 }
 
 /**
- * Zjistí pro seznam položek k tisku, u kterých SKU se celý text při zapnutém bezpečnostním textu
+ * Zjistí pro seznam položek k tisku, u kterých SKU se celý text (včetně názvu na max 2 řádky)
  * nevejde do zvolené šablony.
  */
 export async function detectSafetyTextOverflows(
@@ -802,9 +857,8 @@ export async function detectSafetyTextOverflows(
   template: { fieldsConfig: string; fontConfig: string; layoutConfig: string },
   fontOverrides?: FontOverrides
 ): Promise<LabelOverflowDetail[]> {
-  const fields: FieldsConfig = JSON.parse(template.fieldsConfig);
   const layout = JSON.parse(template.layoutConfig);
-  if (layout.sixIconsLayout || !fields.showSafetyText || items.length === 0) {
+  if (layout.sixIconsLayout || items.length === 0) {
     return [];
   }
 
@@ -819,6 +873,124 @@ export async function detectSafetyTextOverflows(
   }
 
   return results;
+}
+
+const UNIFORM_MIN_FONT_SIZE = 3.0;
+
+const MIN_READABLE_FONT_SIZES: Required<FontOverrides> = {
+  bodyFontSize: UNIFORM_MIN_FONT_SIZE,
+  nameFontSize: UNIFORM_MIN_FONT_SIZE,
+  priceFontSize: UNIFORM_MIN_FONT_SIZE,
+  skuFontSize: UNIFORM_MIN_FONT_SIZE,
+  brandFontSize: UNIFORM_MIN_FONT_SIZE,
+};
+
+/**
+ * Automaticky najde největší čitelné velikosti písem (krok 0.5 pt),
+ * při kterých se všechny položky v tiskové frontě vejdou do zvolené šablony bez přetečení.
+ */
+export async function findOptimalFontSizes(
+  items: Omit<PrintItem, 'quantity'>[],
+  template: { fieldsConfig: string; fontConfig: string; layoutConfig: string },
+  currentOverrides?: FontOverrides
+): Promise<AutoFitFontResult> {
+  const baseFonts: FontConfig = JSON.parse(template.fontConfig);
+  const current: Required<FontOverrides> = {
+    nameFontSize: currentOverrides?.nameFontSize ?? baseFonts.nameFontSize ?? 9.5,
+    skuFontSize: currentOverrides?.skuFontSize ?? baseFonts.skuFontSize ?? 6.5,
+    brandFontSize: currentOverrides?.brandFontSize ?? baseFonts.brandFontSize ?? 7,
+    priceFontSize: currentOverrides?.priceFontSize ?? baseFonts.priceFontSize ?? 11,
+    bodyFontSize: currentOverrides?.bodyFontSize ?? baseFonts.bodyFontSize ?? 6,
+  };
+
+  const layout = JSON.parse(template.layoutConfig);
+  if (layout.sixIconsLayout || items.length === 0) {
+    return {
+      fitted: true,
+      changed: false,
+      fontSizes: current,
+      remainingOverflows: [],
+    };
+  }
+
+  const { regularFont, boldFont } = await getMeasurementFonts();
+  const measureAll = (sizes: Required<FontOverrides>) =>
+    items
+      .map((item) => measureSingleLabelOverflow(item, template, regularFont, boldFont, sizes))
+      .filter((d) => d.overflows);
+
+  let candidate = { ...current };
+  let overflows = measureAll(candidate);
+  if (overflows.length === 0) {
+    return {
+      fitted: true,
+      changed: false,
+      fontSizes: candidate,
+      remainingOverflows: [],
+    };
+  }
+
+  const stepDown = (val: number, minVal: number) =>
+    Math.max(minVal, Math.round((val - 0.5) * 10) / 10);
+
+  // Postupné zmenšování v krocích 0.5 pt (priorita: body + name + price, následně sku + brand)
+  for (let iter = 0; iter < 30; iter++) {
+    const hasVertical = overflows.some((o) => o.hasVerticalOverflow);
+    const hasLongName = overflows.some((o) => o.nameExceedsTwoLines);
+
+    const next = { ...candidate };
+    let moved = false;
+
+    if (hasLongName && next.nameFontSize > MIN_READABLE_FONT_SIZES.nameFontSize) {
+      next.nameFontSize = stepDown(next.nameFontSize, MIN_READABLE_FONT_SIZES.nameFontSize);
+      moved = true;
+    }
+
+    if (hasVertical) {
+      if (next.bodyFontSize > MIN_READABLE_FONT_SIZES.bodyFontSize) {
+        next.bodyFontSize = stepDown(next.bodyFontSize, MIN_READABLE_FONT_SIZES.bodyFontSize);
+        moved = true;
+      }
+      if (next.priceFontSize > MIN_READABLE_FONT_SIZES.priceFontSize) {
+        next.priceFontSize = stepDown(next.priceFontSize, MIN_READABLE_FONT_SIZES.priceFontSize);
+        moved = true;
+      }
+      if (!hasLongName && next.nameFontSize > MIN_READABLE_FONT_SIZES.nameFontSize) {
+        next.nameFontSize = stepDown(next.nameFontSize, MIN_READABLE_FONT_SIZES.nameFontSize);
+        moved = true;
+      }
+      if (next.skuFontSize > MIN_READABLE_FONT_SIZES.skuFontSize) {
+        next.skuFontSize = stepDown(next.skuFontSize, MIN_READABLE_FONT_SIZES.skuFontSize);
+        moved = true;
+      }
+      if (next.brandFontSize > MIN_READABLE_FONT_SIZES.brandFontSize) {
+        next.brandFontSize = stepDown(next.brandFontSize, MIN_READABLE_FONT_SIZES.brandFontSize);
+        moved = true;
+      }
+    }
+
+    if (!moved) break;
+
+    candidate = next;
+    overflows = measureAll(candidate);
+    if (overflows.length === 0) {
+      break;
+    }
+  }
+
+  const changed =
+    candidate.nameFontSize !== current.nameFontSize ||
+    candidate.skuFontSize !== current.skuFontSize ||
+    candidate.brandFontSize !== current.brandFontSize ||
+    candidate.priceFontSize !== current.priceFontSize ||
+    candidate.bodyFontSize !== current.bodyFontSize;
+
+  return {
+    fitted: overflows.length === 0,
+    changed,
+    fontSizes: candidate,
+    remainingOverflows: overflows,
+  };
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -866,7 +1038,7 @@ export async function generateLabelsPdf(
   const labelProducts: Omit<PrintItem,'quantity'>[] = [];
   for (const item of items) {
     for (let q = 0; q < item.quantity; q++) {
-      labelProducts.push({ id:item.id, sku:item.sku, name:item.name, brand:item.brand,
+      labelProducts.push({ id:item.id, sku:item.sku, name:item.name, shortName:item.shortName, brand:item.brand,
         price:item.price, safetyText:item.safetyText, contactText:item.contactText,
         ean:item.ean, note:item.note });
     }

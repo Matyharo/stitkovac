@@ -130,6 +130,7 @@ export async function getProductById(id: string) {
 export async function updateProduct(id: string, data: {
   sku: string;
   name: string;
+  shortName?: string | null;
   description?: string | null;
   brand?: string | null;
   price?: number | null;
@@ -159,10 +160,16 @@ export async function updateProduct(id: string, data: {
         ? data.description?.trim() || null
         : existingProduct?.description ?? null;
 
+    const shortName =
+      data.shortName !== undefined
+        ? data.shortName?.trim() || null
+        : existingProduct?.shortName ?? null;
+
     const updated = await prisma.product.update({
       where: { id },
       data: {
         ...data,
+        shortName,
         description,
         contactText,
         safetyText,
@@ -220,6 +227,7 @@ export async function deleteProducts(ids: string[]) {
 export async function createProduct(data: {
   sku: string;
   name: string;
+  shortName?: string | null;
   description?: string | null;
   brand?: string | null;
   price?: number | null;
@@ -239,10 +247,12 @@ export async function createProduct(data: {
       : resolveSafetyTextForBrand(data.brand, rules);
 
     const description = data.description?.trim() ? data.description.trim() : null;
+    const shortName = data.shortName?.trim() ? data.shortName.trim() : null;
 
     const created = await prisma.product.create({
       data: {
         ...data,
+        shortName,
         description,
         contactText,
         safetyText,
@@ -1602,6 +1612,74 @@ export async function rejectAllPendingProductsAction(ids?: string[]) {
 export async function getSyncLogsAction(limit: number = 10) {
   const { getSyncLogs } = await import('@/lib/feedSync');
   return await getSyncLogs(limit);
+}
+
+export async function shortenAndSaveProductNameAction(input: {
+  productId: string;
+  name: string;
+  brand?: string | null;
+  maxChars?: number;
+}) {
+  const auth = await requireAuthenticatedSession();
+  if (!auth.authenticated) {
+    return {
+      ok: false as const,
+      errorType: 'unauthorized' as const,
+      error: 'Pro použití AI asistenta musíte být přihlášeni v aplikaci.',
+    };
+  }
+
+  const { shortenProductNameForLabel } = await import('@/lib/safetyClassifier');
+  const res = await shortenProductNameForLabel({
+    name: input.name,
+    brand: input.brand,
+    maxChars: input.maxChars,
+  });
+
+  if (!res.ok) {
+    return res;
+  }
+
+  await prisma.product.update({
+    where: { id: input.productId },
+    data: { shortName: res.shortName },
+  });
+
+  await logActivity(
+    'AI_NAME_SHORTEN',
+    `AI zkrácení názvu pro "${input.name.slice(0, 40)}" -> "${res.shortName}"`
+  );
+  revalidatePath('/products');
+  revalidatePath('/print');
+
+  return {
+    ok: true as const,
+    shortName: res.shortName,
+    model: res.model,
+  };
+}
+
+export async function updateProductShortNameAction(productId: string, shortName: string | null) {
+  const auth = await requireAuthenticatedSession();
+  if (!auth.authenticated) {
+    return { success: false, error: 'Pro úpravu produktu musíte být přihlášeni.' };
+  }
+
+  try {
+    const clean = shortName?.trim() || null;
+    const updated = await prisma.product.update({
+      where: { id: productId },
+      data: { shortName: clean },
+    });
+    revalidatePath('/products');
+    revalidatePath('/print');
+    return { success: true, shortName: updated.shortName };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Nepodařilo se uložit zkrácený název.',
+    };
+  }
 }
 
 

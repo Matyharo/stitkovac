@@ -4,6 +4,7 @@ import path from 'path';
 import {
   generateLabelsPdf,
   detectSafetyTextOverflows,
+  findOptimalFontSizes,
   setRobotoFontBytesCache,
 } from '../pdfGenerator';
 import { loadSafetyTemplates } from '../safetyTemplates';
@@ -164,5 +165,139 @@ describe('PDF Generation with Czech Diacritics & Safety Text Overflow Detection'
       { bodyFontSize: 4, nameFontSize: 7, priceFontSize: 8 }
     );
     expect(overflowsSmallFont).toHaveLength(0);
+  });
+
+  it('detects product names exceeding 2 lines and resolves them when shortName is set', async () => {
+    const longNameItem = {
+      id: 'p-long-name',
+      sku: 'SKU-LONG-NAME',
+      name: 'Extrémně dlouhý profesionální název kosmetického produktu pro hloubkovou regeneraci a hydrataci pleti 500 ml',
+      brand: 'MAXYMOVA',
+      price: null,
+      ean: null,
+      safetyText: null,
+      contactText: null,
+    };
+
+    const overflows = await detectSafetyTextOverflows([longNameItem], standardTemplate, {
+      nameFontSize: 10,
+    });
+    expect(overflows).toHaveLength(1);
+    expect(overflows[0].nameExceedsTwoLines).toBe(true);
+    expect(overflows[0].nameWrappedLines).toBeGreaterThan(2);
+
+    const withShortName = {
+      ...longNameItem,
+      shortName: 'Hydratační sérum na pleť 500 ml',
+    };
+    const overflowsWithShortName = await detectSafetyTextOverflows([withShortName], standardTemplate, {
+      nameFontSize: 10,
+    });
+    expect(overflowsWithShortName).toHaveLength(0);
+  });
+
+  it('wraps hyphenated product names after hyphens just like browser preview', async () => {
+    const dualTemplate = {
+      fieldsConfig: JSON.stringify({
+        showName: true,
+        showSku: false,
+        showBrand: false,
+        showPrice: true,
+        showSafetyText: true,
+        showContactText: true,
+        showEan: false,
+      }),
+      fontConfig: JSON.stringify({
+        fontFamily: 'Roboto',
+        nameFontSize: 5,
+        priceFontSize: 5,
+        bodyFontSize: 3.5,
+        skuFontSize: 4,
+        brandFontSize: 4,
+      }),
+      layoutConfig: JSON.stringify({
+        labelWidth: 63.5,
+        labelHeight: 38.1,
+        topMargin: 15.15,
+        leftMargin: 7.25,
+        horizontalGap: 2.5,
+        verticalGap: 0,
+        columns: 3,
+        rows: 7,
+        dualLayout: true,
+        labelRotation: 90,
+      }),
+    };
+
+    const item = {
+      id: 'ke25007',
+      sku: 'KE25007',
+      name: 'ELLA BACHÉ REJUVENIUM PRO-REGENERATIVE biocelulózová maska 5 ks',
+      brand: 'ELLA BACHÉ',
+      price: 1800,
+      ean: null,
+      safetyText:
+        'Zevní použití. Po každém použití dobře uzavřete. Skladujte v chladu a vyhněte se slunečnímu záření.',
+      contactText: 'Evolution Beauty Institut s. r. o.\nIČO: 07996811\nwww.ellabache.cz',
+    };
+
+    const overflows = await detectSafetyTextOverflows([item], dualTemplate);
+    expect(overflows).toHaveLength(0);
+  });
+
+  it('findOptimalFontSizes reduces font sizes so overflowing labels fit without clipping', async () => {
+    const catalog = loadSafetyTemplates();
+    const waxRollTemplate = catalog.byCode.get('DEP_ROLL');
+    expect(waxRollTemplate).toBeDefined();
+
+    const item = {
+      id: 'p-autofit',
+      sku: 'SKU-AUTOFIT',
+      name: 'Roll-on vosk Azulene 100 ml',
+      brand: 'ITALWAX',
+      price: 89,
+      ean: null,
+      safetyText: waxRollTemplate!.safetyText,
+      contactText:
+        'Evolution Beauty Institut s. r. o.\nIČO: 07996811\n5. května 70, 140 00 Praha 4',
+    };
+
+    const result = await findOptimalFontSizes([item], standardTemplate, {
+      nameFontSize: 10,
+      bodyFontSize: 7.5,
+      priceFontSize: 11,
+      skuFontSize: 7,
+      brandFontSize: 7,
+    });
+
+    expect(result.fitted).toBe(true);
+    expect(result.remainingOverflows).toHaveLength(0);
+    expect(result.fontSizes.bodyFontSize).toBeLessThan(7.5);
+    expect(result.fontSizes.bodyFontSize).toBeGreaterThanOrEqual(3.0);
+  });
+
+  it('generateLabelsPdf renders shortName when present and produces valid PDF', async () => {
+    const pdfBytes = await generateLabelsPdf(
+      [
+        {
+          id: 'p-shortname',
+          sku: 'SKU-SHORTNAME',
+          name: 'Velmi dlouhý původní název produktu z Shoptet feedu včetně varianty a objemu',
+          shortName: 'Krátký název produktu',
+          brand: 'TEST',
+          price: 199,
+          ean: null,
+          safetyText: null,
+          contactText: null,
+          quantity: 1,
+        },
+      ],
+      standardTemplate,
+      1
+    );
+
+    const header = new TextDecoder().decode(pdfBytes.slice(0, 8));
+    expect(header).toContain('%PDF-');
+    expect(pdfBytes.length).toBeGreaterThan(2000);
   });
 });

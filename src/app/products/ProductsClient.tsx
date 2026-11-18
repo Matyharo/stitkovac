@@ -25,13 +25,15 @@ import {
   HelpCircle,
   Tag,
   Sparkles,
-  ShieldCheck
+  ShieldCheck,
+  Printer
 } from 'lucide-react';
 
 interface Product {
   id: string;
   sku: string;
   name: string;
+  shortName?: string | null;
   description?: string | null;
   brand: string | null;
   price: number | null;
@@ -380,6 +382,7 @@ export default function ProductsPage() {
     const res = await updateProduct(editingProduct.id, {
       sku: editingProduct.sku,
       name: editingProduct.name,
+      shortName: editingProduct.shortName ?? null,
       description: editingProduct.description ?? null,
       brand: editingProduct.brand,
       price: isNaN(Number(priceNum)) ? null : priceNum,
@@ -1192,6 +1195,13 @@ export default function ProductsPage() {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex justify-end gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                        <Link
+                          href={`/print?productId=${encodeURIComponent(prod.id)}`}
+                          title="Vytisknout etiketu"
+                          className="p-1.5 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 rounded-lg transition-colors"
+                        >
+                          <Printer className="w-4 h-4" />
+                        </Link>
                         <button
                           onClick={() => {
                             invalidateAiProposal();
@@ -1343,6 +1353,20 @@ export default function ProductsPage() {
                       invalidateAiProposal();
                       setEditingProduct({ ...editingProduct, name: e.target.value });
                     }}
+                    className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-650 mb-1 uppercase tracking-wider">
+                    Zkrácený název pro etiketu <span className="text-[10px] font-normal normal-case text-slate-400">(volitelné, max 2 řádky)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editingProduct.shortName || ''}
+                    onChange={(e) => {
+                      setEditingProduct({ ...editingProduct, shortName: e.target.value || null });
+                    }}
+                    placeholder="Pokud je prázdné, tiskne se plný název"
                     className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none"
                   />
                 </div>

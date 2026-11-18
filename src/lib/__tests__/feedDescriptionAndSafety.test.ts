@@ -36,11 +36,27 @@ async function cleanupTestRecords() {
 }
 
 describe('Product Description & Safety Text Concurrency in Feed Sync and Import', () => {
+  let savedFeedConfig: {
+    id: string;
+    lastSyncAt: Date | null;
+    syncStatus: string | null;
+    syncMessage: string | null;
+  } | null = null;
+
   beforeAll(async () => {
     try {
       await prisma.product.count();
     } catch {
       execSync('npx prisma db push --skip-generate', { stdio: 'ignore' });
+    }
+    const existingConfig = await prisma.feedConfig.findFirst();
+    if (existingConfig) {
+      savedFeedConfig = {
+        id: existingConfig.id,
+        lastSyncAt: existingConfig.lastSyncAt,
+        syncStatus: existingConfig.syncStatus,
+        syncMessage: existingConfig.syncMessage,
+      };
     }
   });
 
@@ -50,6 +66,16 @@ describe('Product Description & Safety Text Concurrency in Feed Sync and Import'
 
   afterAll(async () => {
     await cleanupTestRecords();
+    if (savedFeedConfig) {
+      await prisma.feedConfig.update({
+        where: { id: savedFeedConfig.id },
+        data: {
+          lastSyncAt: savedFeedConfig.lastSyncAt,
+          syncStatus: savedFeedConfig.syncStatus,
+          syncMessage: savedFeedConfig.syncMessage,
+        },
+      });
+    }
     vi.restoreAllMocks();
   });
 

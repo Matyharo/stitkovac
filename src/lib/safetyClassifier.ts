@@ -96,7 +96,7 @@ export function stripHtmlToPlainText(
   // 3. Pokud byl ze Shoptetu stažen feed s parametrem stripTags=1, Shoptet odstranil značky <script>,
   // ale ponechal uvnitř surový JavaScript a text widgetu "Průvodce procedurou ... else I()})();".
   text = text.replace(/Průvodce procedurou[\s\S]*?else\s+I\(\)\}\)\(\);?/gi, ' ');
-  text = text.replace(/Průvodce procedurou[\s\S]*?Přejít do průvodce procedurou\s*→/gi, ' ');
+  text = text.replace(/Průvodce procedurou[\s\S]*?Přejít do průvodce procedurou(?:\s*→)?/gi, ' ');
   text = text.replace(/\(function\s*\(\)\s*\{[\s\S]*?\}\)\(\);?/g, ' ');
   text = text.replace(/@import\s+url\([^)]+\);?[\s\S]*?else\s+I\(\)\}\)\(\);?/gi, ' ');
 
@@ -394,5 +394,201 @@ export async function classifyProductSafety(
     model,
     categories,
   };
+}
+
+export interface ShortenNameInput {
+  name: string;
+  brand?: string | null;
+  maxChars?: number;
+}
+
+export type ShortenNameResult =
+  | {
+      ok: true;
+      shortName: string;
+      model: string;
+    }
+  | {
+      ok: false;
+      errorType: 'validation' | 'timeout' | 'unavailable' | 'model_not_found' | 'http_error' | 'invalid_response';
+      error: string;
+    };
+
+/**
+ * Zkrátí dlouhý název produktu pomocí lokální Ollamy tak, aby se čitelně vešel
+ * na max. 2 řádky produktové etikety, při zachování značky, typu výrobku a velikosti/objemu.
+ */
+export async function shortenProductNameForLabel(
+  input: ShortenNameInput,
+  options?: Omit<ClassifierOptions, 'catalog'>
+): Promise<ShortenNameResult> {
+  const cleanName = stripHtmlToPlainText(input.name, MAX_PRODUCT_NAME_LENGTH);
+  const cleanBrand = stripHtmlToPlainText(input.brand, 100);
+  const targetMaxChars = Math.max(20, Math.min(80, Math.round(input.maxChars ?? 42)));
+
+  if (!cleanName) {
+    return {
+      ok: false,
+      errorType: 'validation',
+      error: 'Název produktu nesmí být prázdný.',
+    };
+  }
+
+  const serverConfig = getServerOllamaConfig();
+  const baseUrl = (options?.baseUrl ?? serverConfig.baseUrl).replace(/\/+$/, '');
+  const model = options?.model ?? serverConfig.model;
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_OLLAMA_TIMEOUT_MS;
+  const fetchFn = options?.fetchImpl ?? fetch;
+
+  const systemPrompt = [
+    'Jsi editor produktových etiket pro salonní e-shop.',
+    `Tvým úkolem je vhodně zkrátit název produktu tak, aby se vešel na malou etiketu (max 2 řádky, ideálně do ${targetMaxChars} znaků).`,
+    'PRAVIDLA:',
+    '1. Zachovej klíčové údaje: značku/řadu, druh výrobku, variantu/odstín a gramáž, objem nebo počet kusů/párů (např. 250 ml, 7 párů, 5 g).',
+    '2. Odstraň marketingovou vatu, zbytečné popisky a opakující se slova (např. "NOVÉ Balení", "jednotlivá velikost", "profesionální přípravek", "s efektem", dlouhé vysvětlivky v češtině/angličtině).',
+    '3. Nevymýšlej žádné nové údaje a neměň čísla ani jednotky.',
+    '4. Výsledek musí být kratší než původní název a přirozeně čitelný.',
+    'Odpověz výhradně jako JSON objekt ve tvaru {"shortName":"zkrácený název"}.',
+  ].join('\n');
+
+  const userMessage = [
+    'Zkrať následující název produktu pro tisk na etiketu:',
+    '<PRODUCT_NAME_DATA>',
+    `Původní název: ${cleanName}`,
+    cleanBrand ? `Značka: ${cleanBrand}` : '',
+    `Cílová délka: nejvýše ${targetMaxChars} znaků`,
+    '</PRODUCT_NAME_DATA>',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const requestBody = {
+    model,
+    stream: false,
+    think: false,
+    options: {
+      temperature: 0.1,
+    },
+    format: {
+      type: 'object',
+      properties: {
+        shortName: {
+          type: 'string',
+        },
+      },
+      required: ['shortName'],
+      additionalProperties: false,
+    },
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage },
+    ],
+  };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetchFn(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
+    });
+  } catch (err: unknown) {
+    clearTimeout(timer);
+    if (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+      return {
+        ok: false,
+        errorType: 'timeout',
+        error: `Lokální AI model (${model}) neodpověděl v časovém limitu ${Math.round(timeoutMs / 1000)} s.`,
+      };
+    }
+    return {
+      ok: false,
+      errorType: 'unavailable',
+      error: `Nepodařilo se připojit k lokální Ollamě (${baseUrl}). Zkontrolujte, zda služba Ollama běží.`,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!response.ok) {
+    let errDetail = '';
+    try {
+      const errJson = (await response.json()) as { error?: string };
+      if (errJson?.error) errDetail = errJson.error;
+    } catch {
+      // ignore
+    }
+
+    if (response.status === 404 || errDetail.toLowerCase().includes('not found')) {
+      return {
+        ok: false,
+        errorType: 'model_not_found',
+        error: `Model "${model}" nebyl v lokální Ollamě nalezen. Spusťte prosím: ollama pull ${model}`,
+      };
+    }
+
+    return {
+      ok: false,
+      errorType: 'http_error',
+      error: `Lokální AI služba vrátila chybu (HTTP ${response.status}${errDetail ? `: ${errDetail}` : ''}).`,
+    };
+  }
+
+  let data: { message?: { content?: string }; response?: string };
+  try {
+    data = (await response.json()) as { message?: { content?: string }; response?: string };
+  } catch {
+    return {
+      ok: false,
+      errorType: 'invalid_response',
+      error: 'Lokální AI služba vrátila neplatnou odpověď.',
+    };
+  }
+
+  const rawContent = (data?.message?.content ?? data?.response ?? '').trim();
+  if (!rawContent) {
+    return {
+      ok: false,
+      errorType: 'invalid_response',
+      error: 'Lokální AI model vrátil prázdnou odpověď.',
+    };
+  }
+
+  try {
+    const cleanedJson = rawContent.replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
+    const parsed = JSON.parse(cleanedJson) as { shortName?: unknown };
+    if (!parsed || typeof parsed.shortName !== 'string') {
+      return {
+        ok: false,
+        errorType: 'invalid_response',
+        error: 'Model nevrátil platný zkrácený název.',
+      };
+    }
+
+    const shortName = stripHtmlToPlainText(parsed.shortName, 120).replace(/\s+/g, ' ').trim();
+    if (!shortName) {
+      return {
+        ok: false,
+        errorType: 'invalid_response',
+        error: 'Model vrátil prázdný zkrácený název.',
+      };
+    }
+
+    return {
+      ok: true,
+      shortName,
+      model,
+    };
+  } catch {
+    return {
+      ok: false,
+      errorType: 'invalid_response',
+      error: 'Nepodařilo se zpracovat JSON odpověď z modelu.',
+    };
+  }
 }
 
