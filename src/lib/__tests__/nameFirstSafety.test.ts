@@ -5,6 +5,20 @@ import { loadSafetyTemplates } from '../safetyTemplates';
 const response = (code: string) => ({ ok: true, status: 200, json: async () => ({ message: { content: JSON.stringify({ code }) } }) });
 
 describe('name-first safety classification', () => {
+  it('recognizes Lamitta lash curlers immediately without calling AI', async () => {
+    const fetchImpl = vi.fn();
+    const result = await classifyProductSafety({ name: 'Lamitta silikonové natáčky na lash lifting 1 pár' }, { fetchImpl });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(result.ok && result.code).toBe('LASH_NAT');
+    expect(result.ok && result.safetyText).toBe(loadSafetyTemplates().byCode.get('LASH_NAT')?.safetyText);
+  });
+  it.each(['Lepidlo na silikonové natáčky na řasy', 'Kompenzátory na natáčky na lash lifting', 'Čistič natáček na řasy', 'Sada pro lash lifting s natáčkami'])(
+    'does not mistake related products for curlers: %s', async (name) => {
+      const fetchImpl = vi.fn().mockResolvedValue(response('NEURCENO'));
+      await classifyProductSafety({ name }, { fetchImpl });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    }
+  );
   it('uses only the name on a confident first pass and retains exact Excel text', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(response('DEP_OHRIVAC'));
     const result = await classifyProductSafety({ name: 'Ohřívač vosku', description: 'SECRET_DESCRIPTION_SENTINEL' }, { fetchImpl });

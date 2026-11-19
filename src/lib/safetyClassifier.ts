@@ -184,6 +184,15 @@ export function buildClassifierSystemPrompt(catalog: SafetyTemplatesCatalog): st
   ].join('\n');
 }
 
+/** Narrow, high-confidence rule; safety wording always comes from the workbook. */
+export function recognizeUnambiguousName(name: string): string | null {
+  const text = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const curlers = /\b(?:natack[a-z]*|curlers?)\b/.test(text);
+  const lashes = /\b(?:ras[a-z]*|lash|eyelash|eyelashes)\b/.test(text);
+  const otherProduct = /kompenz|compensator|lepid|adhesive|\bglue\b|cistic|cleaner|odstranovac|remover|\bserum\b|\bobal|\bpouzdro|\bstet|\bset\b|\bsada\b/.test(text);
+  return curlers && lashes && !otherProduct ? 'LASH_NAT' : null;
+}
+
 /** First pass sends only the name and a compact catalog, not the product description. */
 export function buildNameClassifierSystemPrompt(catalog: SafetyTemplatesCatalog): string {
   return [
@@ -277,6 +286,25 @@ async function classifyProductSafetyPass(
   const model = options?.model ?? serverConfig.model;
   const timeoutMs = options?.timeoutMs ?? DEFAULT_OLLAMA_TIMEOUT_MS;
   const fetchFn = options?.fetchImpl ?? fetch;
+
+  const nameCode = nameOnly ? recognizeUnambiguousName(cleanName) : null;
+  const nameEntry = nameCode ? catalog.byCode.get(nameCode) : undefined;
+  if (nameEntry) {
+    return {
+      ok: true,
+      code: nameEntry.code,
+      rawModelCode: null,
+      usedFallback: false,
+      area: nameEntry.area,
+      productType: nameEntry.productType,
+      safetyText: nameEntry.safetyText,
+      mode: nameEntry.mode,
+      checkNote: nameEntry.checkNote,
+      clues: nameEntry.clues,
+      model: 'name-rule',
+      categories,
+    };
+  }
 
   const validCodes = catalog.templates.map((t) => t.code);
 
