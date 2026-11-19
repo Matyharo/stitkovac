@@ -21,6 +21,7 @@ model Product {
   note        String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  safetySelection ProductSafetySelection?
 }
 
 model LabelTemplate {
@@ -121,3 +122,13 @@ model SyncLog {
 }
 
 
+
+model ProductSafetySelection {
+  productId   String   @id
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  code        String
+  name        String
+  description String   @default("")
+  safetyText  String
+  confirmedAt DateTime @default(now())
+}

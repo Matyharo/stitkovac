@@ -5,6 +5,7 @@ import {
   SafetyTemplatesCatalog,
   SafetyMode,
 } from './safetyTemplates';
+import { matchSafetyRules } from './safetyRules';
 
 export const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434';
 export const DEFAULT_OLLAMA_MODEL = 'qwen3:4b';
@@ -34,6 +35,8 @@ export interface ClassificationSuccess {
   rawModelCode: string | null;
   usedFallback: boolean;
   manuallySelected?: boolean;
+  source?: 'saved' | 'rule' | 'manual' | 'ai';
+  reason?: string;
   area: string;
   productType: string;
   safetyText: string;
@@ -59,6 +62,7 @@ export interface ClassifierOptions {
   model?: string;
   timeoutMs?: number;
   catalog?: SafetyTemplatesCatalog;
+  skipNameRules?: boolean;
 }
 
 const HTML_ENTITIES: Record<string, string> = {
@@ -186,11 +190,8 @@ export function buildClassifierSystemPrompt(catalog: SafetyTemplatesCatalog): st
 
 /** Narrow, high-confidence rule; safety wording always comes from the workbook. */
 export function recognizeUnambiguousName(name: string): string | null {
-  const text = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  const curlers = /\b(?:natack[a-z]*|curlers?)\b/.test(text);
-  const lashes = /\b(?:ras[a-z]*|lash|eyelash|eyelashes)\b/.test(text);
-  const otherProduct = /kompenz|compensator|lepid|adhesive|\bglue\b|cistic|cleaner|odstranovac|remover|\bserum\b|\bobal|\bpouzdro|\bstet|\bset\b|\bsada\b/.test(text);
-  return curlers && lashes && !otherProduct ? 'LASH_NAT' : null;
+  const result = matchSafetyRules(name, loadSafetyTemplates());
+  return result.code === 'LASH_NAT' ? result.code : null;
 }
 
 /** First pass sends only the name and a compact catalog, not the product description. */
@@ -287,7 +288,7 @@ async function classifyProductSafetyPass(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_OLLAMA_TIMEOUT_MS;
   const fetchFn = options?.fetchImpl ?? fetch;
 
-  const nameCode = nameOnly ? recognizeUnambiguousName(cleanName) : null;
+  const nameCode = nameOnly && !options?.skipNameRules ? recognizeUnambiguousName(cleanName) : null;
   const nameEntry = nameCode ? catalog.byCode.get(nameCode) : undefined;
   if (nameEntry) {
     return {

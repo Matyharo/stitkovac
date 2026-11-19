@@ -7,6 +7,9 @@ import { cookies } from 'next/headers';
 import crypto from 'crypto';
 import { createSession, SESSION_MAX_AGE, secureSessionCookie } from '@/lib/session';
 import { getAuthenticatedUser, assertAuthenticated } from '@/lib/auth';
+import { selectionMatches, storeSafetySelection } from '@/lib/safetySelection';
+import { loadSafetyTemplates } from '@/lib/safetyTemplates';
+import { safetyProposal, suggestSafetyWithoutAI } from '@/lib/safetyRules';
 
 // --- AUTH UTILS ---
 export async function hashPassword(password: string): Promise<string> {
@@ -79,12 +82,14 @@ export async function updateProduct(id: string, data: {
   brand?: string | null;
   price?: number | null;
   safetyText?: string | null;
+  confirmedSafetyCode?: string | null;
   contactText?: string | null;
   ean?: string | null;
   note?: string | null;
 }) {
   await assertAuthenticated();
   try {
+    const { confirmedSafetyCode, ...productData } = data;
     const rules = await getContactRules();
     const contactText = data.contactText?.trim()
       ? data.contactText
@@ -110,15 +115,19 @@ export async function updateProduct(id: string, data: {
         ? data.shortName?.trim() || null
         : existingProduct?.shortName ?? null;
 
-    const updated = await prisma.product.update({
+    const updated = await prisma.$transaction(async tx => {
+      const product = await tx.product.update({
       where: { id },
       data: {
-        ...data,
+        ...productData,
         shortName,
         description,
         contactText,
         safetyText,
       },
+    });
+      await storeSafetySelection(tx, product, confirmedSafetyCode);
+      return product;
     });
     await logActivity('PRODUCT_UPDATE', `Upraven produkt SKU: ${updated.sku} (Název: ${updated.name})`);
     revalidatePath('/products');
@@ -179,12 +188,14 @@ export async function createProduct(data: {
   brand?: string | null;
   price?: number | null;
   safetyText?: string | null;
+  confirmedSafetyCode?: string | null;
   contactText?: string | null;
   ean?: string | null;
   note?: string | null;
 }) {
   await assertAuthenticated();
   try {
+    const { confirmedSafetyCode, ...productData } = data;
     const rules = await getContactRules();
     const contactText = data.contactText?.trim()
       ? data.contactText
@@ -197,14 +208,18 @@ export async function createProduct(data: {
     const description = data.description?.trim() ? data.description.trim() : null;
     const shortName = data.shortName?.trim() ? data.shortName.trim() : null;
 
-    const created = await prisma.product.create({
+    const created = await prisma.$transaction(async tx => {
+      const product = await tx.product.create({
       data: {
-        ...data,
+        ...productData,
         shortName,
         description,
         contactText,
         safetyText,
       },
+    });
+      await storeSafetySelection(tx, product, confirmedSafetyCode);
+      return product;
     });
     await logActivity('PRODUCT_CREATE', `Vytvořen produkt SKU: ${created.sku} (Název: ${created.name})`);
     revalidatePath('/products');
@@ -1535,31 +1550,35 @@ export async function approvePendingProductAction(
 export async function suggestProductSafetyTextAction(input: {
   name: string;
   description?: string | null;
+  productId?: string;
+  currentSafetyText?: string | null;
+  mode?: 'rules' | 'ai';
 }) {
   await assertAuthenticated();
-  const auth = await requireAuthenticatedSession();
-  if (!auth.authenticated) {
-    return {
-      ok: false as const,
-      errorType: 'unauthorized' as const,
-      error: 'Pro použití AI asistenta musíte být přihlášeni v aplikaci.',
-    };
+  try {
+    if (!input?.name?.trim()) return { ok: false as const, errorType: 'validation' as const, error: 'Zadejte název produktu.' };
+    const catalog = loadSafetyTemplates();
+    if (input.mode !== 'ai') {
+      if (input.productId) {
+        const product = await prisma.product.findUnique({ where: { id: input.productId }, include: { safetySelection: true } });
+        const saved = product?.safetySelection;
+        const draft = { name: input.name, description: input.description, safetyText: input.currentSafetyText ?? product?.safetyText };
+        if (saved && product && selectionMatches(saved, product) && selectionMatches(saved, draft) && catalog.byCode.has(saved.code)) {
+          return safetyProposal(saved.code, 'saved', catalog, 'Použita dříve potvrzená kategorie tohoto produktu.');
+        }
+      }
+      return suggestSafetyWithoutAI(input.name, catalog);
+    }
+    const { classifyProductSafety } = await import('@/lib/safetyClassifier');
+    const result = await classifyProductSafety({ name: input.name, description: input.description }, { catalog, skipNameRules: true });
+    if (result.ok) {
+      await logActivity('AI_SAFETY_SUGGEST', `AI návrh pro "${input.name.slice(0, 50)}": ${result.code}`);
+      return { ...result, source: 'ai' as const, reason: 'Návrh AI. Před použitím zkontrolujte kategorii a text.' };
+    }
+    return result;
+  } catch (error: unknown) {
+    return { ok: false as const, errorType: 'validation' as const, error: error instanceof Error ? error.message : 'Nepodařilo se načíst pravidla.' };
   }
-
-  const { classifyProductSafety } = await import('@/lib/safetyClassifier');
-  const result = await classifyProductSafety({
-    name: input?.name ?? '',
-    description: input?.description ?? '',
-  });
-
-  if (result.ok) {
-    await logActivity(
-      'AI_SAFETY_SUGGEST',
-      `AI návrh bezpečnosti pro "${input.name.slice(0, 50)}": ${result.code} (${result.mode})`
-    );
-  }
-
-  return result;
 }
 
 export async function rejectPendingProductAction(id: string) {
