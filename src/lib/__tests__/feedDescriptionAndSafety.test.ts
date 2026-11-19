@@ -9,6 +9,11 @@ import {
 } from '../feedSync';
 import { analyzeImportedProducts, saveImportedProducts } from '@/app/actions';
 
+vi.mock('../auth', () => ({
+  getAuthenticatedUser: vi.fn(async () => ({ username: 'test', role: 'admin' })),
+  assertAuthenticated: vi.fn(async () => ({ username: 'test', role: 'admin' })),
+}));
+
 vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
 }));

@@ -1,14 +1,14 @@
 'use client';
 
 import { useState, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { login } from '../actions';
 import { Tag, Lock, User, AlertTriangle, Loader2 } from 'lucide-react';
 
 function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const returnUrl = searchParams.get('returnUrl') || '/';
+  const requestedUrl = searchParams.get('returnUrl') || '/';
+  const returnUrl = requestedUrl.startsWith('/') && !requestedUrl.startsWith('//') && !requestedUrl.includes('\\') ? requestedUrl : '/';
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -24,8 +24,7 @@ function LoginForm() {
       const res = await login(username, password);
       if (res.success) {
         // Povedlo se, přesměrujeme uživatele zpět
-        router.push(returnUrl);
-        router.refresh();
+        window.location.assign(returnUrl);
       } else {
         setError(res.error || 'Nesprávné přihlašovací údaje.');
       }
