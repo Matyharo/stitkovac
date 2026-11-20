@@ -892,7 +892,8 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
             Prohlížejte, vyhledávejte a upravujte detaily produktů uložených ve Vašem lokálním katalogu.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {canBulkSafety && <BulkSafety onApplied={() => { loadProducts(debouncedSearch); }} />}
           <button
             onClick={() => {
               invalidateAiProposal();
@@ -905,8 +906,6 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
           </button>
         </div>
       </div>
-
-      {canBulkSafety && <BulkSafety onApplied={() => { loadProducts(debouncedSearch); }} />}
 
       {/* Notifications */}
       {successMessage && (

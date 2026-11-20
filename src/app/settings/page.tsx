@@ -465,8 +465,6 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <SafetyCategoryTransfer />
-
       {/* Notifications */}
       {success && (
         <div className="p-4 bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-xl flex items-start gap-3 text-sm font-semibold animate-in fade-in duration-200">
@@ -1164,6 +1162,8 @@ export default function SettingsPage() {
         </div>
 
       </div>
+
+      <SafetyCategoryTransfer />
 
       {/* CUSTOM CONFIRM MODAL */}
       {confirmModal && confirmModal.isOpen && (
