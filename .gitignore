@@ -50,3 +50,6 @@ next-env.d.ts
 # PDF exports and outputs
 /public/*.pdf
 /*.pdf
+
+# Private backups of product safety texts
+/prisma/safety-backups/

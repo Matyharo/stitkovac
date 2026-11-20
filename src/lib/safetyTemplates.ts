@@ -42,11 +42,20 @@ export interface SafetyUsageRule {
   rule: string;
 }
 
+export interface SafetyNameRule {
+  id: string;
+  code: string;
+  priority: number;
+  groups: string[][];
+  exclude: string[];
+}
+
 export interface SafetyTemplatesCatalog {
   sourcePath: string;
   templates: SafetyTemplateEntry[];
   byCode: Map<string, SafetyTemplateEntry>;
   usageRules: SafetyUsageRule[];
+  nameRules?: SafetyNameRule[];
 }
 
 interface CacheState {
@@ -192,12 +201,50 @@ export function parseAndValidateSafetyWorkbook(
     }
   }
 
+  const nameRules = parseNameRules(workbook, byCode, sourcePath);
+
   return {
     sourcePath,
     templates,
     byCode,
     usageRules,
+    nameRules,
   };
+}
+
+export function parseNameRules(
+  workbook: XLSX.WorkBook,
+  byCode: Map<string, SafetyTemplateEntry>,
+  sourcePath: string
+): SafetyNameRule[] {
+  const sheet = workbook.Sheets['Pravidla'];
+  if (!sheet) return []; // Older workbooks still allow manual selection and optional AI.
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+  const required = ['ID', 'Kód kategorie', 'Priorita', 'Všechny skupiny', 'Vyloučit', 'Aktivní'];
+  const header = (XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 })[0] || []).map(String);
+  if (required.some(key => !header.includes(key))) throw new Error(`List Pravidla (${sourcePath}) nemá všechny požadované sloupce: ${required.join(', ')}.`);
+  const ids = new Set<string>();
+  const rules: SafetyNameRule[] = [];
+  const terms = (value: string) => value.split('|').map(t => t.trim()).filter(Boolean);
+  for (const [index, row] of rows.entries()) {
+    if (Object.values(row).every(v => String(v).trim() === '')) continue;
+    const active = String(row['Aktivní']).trim().toLowerCase();
+    if (!['ano', 'ne'].includes(active)) throw new Error(`Pravidla, řádek ${index + 2}: Aktivní musí být ano nebo ne.`);
+    if (active === 'ne') continue;
+    const id = String(row['ID']).trim();
+    const code = String(row['Kód kategorie']).trim();
+    const priority = Number(row['Priorita']);
+    const groups = String(row['Všechny skupiny']).split(';').map(group => terms(group));
+    if (!id || ids.has(id) || !byCode.has(code) || code === 'NEURCENO' || !Number.isFinite(priority) || String(row['Priorita']).trim() === '' || groups.some(group => group.length === 0)) {
+      throw new Error(`Neplatné pravidlo na řádku ${index + 2} v listu Pravidla (${sourcePath}). Zkontrolujte ID, kategorii, prioritu a skupiny.`);
+    }
+    for (const term of [...groups.flat(), ...terms(String(row['Vyloučit']))]) {
+      if (!/[\p{L}\p{N}]/u.test(term) || (term.includes('*') && (!term.endsWith('*') || term.slice(0, -1).includes('*')))) throw new Error(`Pravidla, řádek ${index + 2}: hvězdička smí být pouze na konci slova.`);
+    }
+    ids.add(id);
+    rules.push({ id, code, priority, groups, exclude: terms(String(row['Vyloučit'])) });
+  }
+  return rules;
 }
 
 /**

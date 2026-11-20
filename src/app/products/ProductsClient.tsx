@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useTransition } from 'react';
 import Link from 'next/link';
+import BulkSafety from './BulkSafety';
+import CreateSafetyCategory from './CreateSafetyCategory';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
   getProducts,
@@ -54,7 +56,7 @@ interface ActiveAiProposal {
   result: AiSuggestionResult;
 }
 
-export default function ProductsPage() {
+export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?: boolean }) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -126,7 +128,15 @@ export default function ProductsPage() {
     note: '',
   });
 
-  // AI safety text assistant state
+  const [confirmedSafety, setConfirmedSafety] = useState<{
+    targetKey: string; name: string; description: string; text: string; code: string;
+  } | null>(null);
+  const getConfirmedCode = (targetKey: string, name: string, description: string, text: string) =>
+    confirmedSafety?.targetKey === targetKey && confirmedSafety.name === name &&
+    confirmedSafety.description === description && confirmedSafety.text === text ? confirmedSafety.code : undefined;
+  const [safetyRequestMode, setSafetyRequestMode] = useState<'rules' | 'ai'>('rules');
+
+  // Safety text assistant state
   const aiRequestIdRef = React.useRef(0);
   const [aiLoadingTarget, setAiLoadingTarget] = useState<string | null>(null);
   const [aiProposal, setAiProposal] = useState<ActiveAiProposal | null>(null);
@@ -142,11 +152,13 @@ export default function ProductsPage() {
   const handleRequestAiSafety = async (
     targetKey: string,
     currentName: string,
-    currentDescription: string
+    currentDescription: string,
+    mode: 'rules' | 'ai' = 'rules'
   ) => {
     const reqId = aiRequestIdRef.current + 1;
     aiRequestIdRef.current = reqId;
     setAiLoadingTarget(targetKey);
+    setSafetyRequestMode(mode);
     setAiProposal(null);
     setAiVerifyConfirmed(false);
 
@@ -154,6 +166,9 @@ export default function ProductsPage() {
       const res = await suggestProductSafetyTextAction({
         name: currentName,
         description: currentDescription,
+        mode,
+        productId: targetKey.startsWith('edit:') ? targetKey.slice(5) : undefined,
+        currentSafetyText: targetKey.startsWith('edit:') ? editingProduct?.safetyText : newProductForm.safetyText,
       });
 
       // Pokud uživatel mezitím změnil název/popis, zavřel modál nebo poslal nový dotaz,
@@ -387,6 +402,7 @@ export default function ProductsPage() {
       brand: editingProduct.brand,
       price: isNaN(Number(priceNum)) ? null : priceNum,
       safetyText: editingProduct.safetyText,
+      confirmedSafetyCode: getConfirmedCode(`edit:${editingProduct.id}`, editingProduct.name, editingProduct.description || '', editingProduct.safetyText || ''),
       contactText: editingProduct.contactText,
       ean: editingProduct.ean,
       note: editingProduct.note,
@@ -422,6 +438,7 @@ export default function ProductsPage() {
       brand: newProductForm.brand || null,
       price: priceNum && !isNaN(priceNum) ? priceNum : null,
       safetyText: newProductForm.safetyText || null,
+      confirmedSafetyCode: getConfirmedCode('create', newProductForm.name, newProductForm.description, newProductForm.safetyText),
       contactText: newProductForm.contactText || null,
       ean: newProductForm.ean || null,
       note: newProductForm.note || null,
@@ -511,9 +528,9 @@ export default function ProductsPage() {
           <div className="flex items-center gap-2.5">
             <RefreshCw className="w-4 h-4 text-indigo-600 animate-spin shrink-0" />
             <div>
-              <span className="font-bold block">Lokální AI asistent analyzuje výrobek...</span>
+              <span className="font-bold block">{safetyRequestMode === 'ai' ? 'AI posuzuje výrobek...' : 'Hledám kategorii výrobku...'}</span>
               <span className="text-[11px] text-indigo-700">
-                Klasifikuji podle aktuálně rozepsaného názvu a popisu přes lokální Ollamu.
+                {safetyRequestMode === 'ai' ? 'Počkejte na návrh AI. Text etikety se přebírá z tabulky.' : 'Kontroluji uloženou kategorii a pravidla podle názvu.'}
               </span>
             </div>
           </div>
@@ -554,6 +571,8 @@ export default function ProductsPage() {
           rawModelCode: res.ok ? res.rawModelCode : null,
           usedFallback: false,
           manuallySelected: true,
+          source: 'manual',
+          reason: 'Kategorie vybraná ručně.',
           area: chosen.area,
           productType: chosen.productType,
           safetyText: chosen.safetyText,
@@ -578,7 +597,7 @@ export default function ProductsPage() {
         >
           <label className="block text-[11px] font-bold text-indigo-950">
             {prominent
-              ? 'AI si není jistá? Vyberte kategorii výrobku ručně a vygenerujte text z tabulky:'
+              ? 'Vyberte kategorii výrobku. Text se načte z katalogu kategorií:'
               : 'Změnit kategorii výrobku ručně:'}
           </label>
           <select
@@ -602,6 +621,11 @@ export default function ProductsPage() {
       );
     };
 
+    const createCategoryControl = <CreateSafetyCategory key={targetKey} onCreated={(result) => {
+      setAiVerifyConfirmed(false);
+      setAiProposal({ ...activeProposal, result });
+    }} />;
+
     // Technická nebo validační chyba (nedostupná Ollama, chybějící model, timeout, prázdný název)
     if (!res.ok) {
       return (
@@ -613,7 +637,7 @@ export default function ProductsPage() {
             <div className="flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
               <div>
-                <span className="font-bold block text-rose-950">Chyba při komunikaci s AI asistentem</span>
+                <span className="font-bold block text-rose-950">Návrh se nepodařilo načíst</span>
                 <p className="mt-0.5 text-rose-800 leading-relaxed">{res.error}</p>
               </div>
             </div>
@@ -627,6 +651,7 @@ export default function ProductsPage() {
             </button>
           </div>
           {renderManualCategorySelector(true)}
+          {createCategoryControl}
           <div className="flex items-center justify-end gap-2 pt-1">
             <button
               type="button"
@@ -637,11 +662,11 @@ export default function ProductsPage() {
             </button>
             <button
               type="button"
-              onClick={() => handleRequestAiSafety(targetKey, currentName, currentDescription)}
+              onClick={() => handleRequestAiSafety(targetKey, currentName, currentDescription, 'ai')}
               className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold transition-colors"
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              Zkusit znovu
+              Posoudit pomocí AI
             </button>
           </div>
         </div>
@@ -705,6 +730,14 @@ export default function ProductsPage() {
           </button>
         </div>
 
+        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+          <p className="text-slate-600" data-testid="safety-source">
+            {res.reason || (res.manuallySelected ? 'Kategorie vybraná ručně.' : 'Návrh kategorie z tabulky.')}
+          </p>
+          <button type="button" data-testid="safety-ask-ai" onClick={() => handleRequestAiSafety(targetKey, currentName, currentDescription, 'ai')}
+            className="font-semibold text-indigo-700 hover:text-indigo-950 underline underline-offset-2">Posoudit pomocí AI</button>
+        </div>
+
         {/* Pokyn "Co zkontrolovat" */}
         {res.checkNote && (
           <div className="p-2.5 rounded-lg bg-amber-50/90 border border-amber-200/90 text-amber-900 flex items-start gap-2">
@@ -759,6 +792,7 @@ export default function ProductsPage() {
             )}
 
             {renderManualCategorySelector(false, res.code)}
+            {createCategoryControl}
 
             <div className="flex items-center justify-end gap-2 pt-1">
               <button
@@ -774,6 +808,7 @@ export default function ProductsPage() {
                 disabled={!canApply}
                 onClick={() => {
                   if (!canApply) return;
+                  setConfirmedSafety({ targetKey, name: currentName, description: currentDescription, text: res.safetyText, code: res.code });
                   onApplySafetyText(res.safetyText);
                   invalidateAiProposal();
                 }}
@@ -790,9 +825,10 @@ export default function ProductsPage() {
         {isManualMode && (
           <div className="space-y-2.5">
             {renderManualCategorySelector(true, res.code)}
+            {createCategoryControl}
             <div className="p-3 rounded-lg bg-white border border-rose-200 text-slate-800">
               <p className="font-semibold text-rose-900">
-                Pro tuto kategorii ({res.productType}) se automatický text nevkládá – vyžaduje ruční posouzení.
+                {res.code === 'NEURCENO' ? 'Vyberte kategorii výrobku nebo využijte volitelné posouzení pomocí AI.' : `Pro tuto kategorii (${res.productType}) se automatický text nevkládá. Vyžaduje ruční posouzení.`}
               </p>
               <p className="text-slate-600 mt-1">
                 Pokud víte, o jaký typ výrobku jde, vyberte kategorii v rozbalovacím seznamu výše a text z tabulky se ihned zobrazí ke schválení. Případně doplňte text ručně podle obalu či bezpečnostního listu.
@@ -822,6 +858,7 @@ export default function ProductsPage() {
               </p>
             </div>
             {renderManualCategorySelector(false, res.code)}
+            {createCategoryControl}
             <div className="flex justify-end">
               <button
                 type="button"
@@ -855,7 +892,8 @@ export default function ProductsPage() {
             Prohlížejte, vyhledávejte a upravujte detaily produktů uložených ve Vašem lokálním katalogu.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {canBulkSafety && <BulkSafety onApplied={() => { loadProducts(debouncedSearch); }} />}
           <button
             onClick={() => {
               invalidateAiProposal();
@@ -1440,7 +1478,7 @@ export default function ProductsPage() {
                     className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-3 py-1 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                    Navrhnout bezpečnostní text
+                    Vybrat bezpečnostní text
                   </button>
                 </div>
                 <textarea
@@ -1610,7 +1648,7 @@ export default function ProductsPage() {
                     className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-3 py-1 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                    Navrhnout bezpečnostní text
+                    Vybrat bezpečnostní text
                   </button>
                 </div>
                 <textarea

@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { getDualLayoutDirection } from '@/lib/labelLayout';
 
 export interface ProductData {
   name: string;
@@ -46,6 +47,7 @@ interface LabelPreviewProps {
     labelHeight: number;
     labelRotation?: number;
     dualLayout?: boolean;
+    dualLayoutDirection?: string;
     customIcons?: Array<{
       id: string;
       name: string;
@@ -73,6 +75,7 @@ const defaultProduct: ProductData = {
 export function LabelPreview({ fields, fonts, layout, product: customProduct }: LabelPreviewProps) {
   const isRotated = layout.labelRotation === 90;
   const isDual = !!layout.dualLayout;
+  const stacked = getDualLayoutDirection(layout) === 'stacked';
   const product = customProduct || defaultProduct;
 
   const mm = 2.83464567;
@@ -80,7 +83,7 @@ export function LabelPreview({ fields, fonts, layout, product: customProduct }: 
   const labelH = layout.labelHeight * mm;
 
   // The visual width of the renderContent container in PDF points:
-  const visualW = isRotated ? labelH : (isDual ? labelW / 2 : labelW);
+  const visualW = (isRotated ? labelH : labelW) / (isDual && !stacked ? 2 : 1);
   const toCqw = (pt: number) => `${(pt / visualW) * 100}cqw`;
 
   const visualCardW = (isRotated ? layout.labelHeight : layout.labelWidth) * mm;
@@ -348,7 +351,7 @@ export function LabelPreview({ fields, fonts, layout, product: customProduct }: 
       className="mx-auto bg-white border border-slate-350 shadow-md rounded-lg relative overflow-hidden flex flex-col justify-between animate-in fade-in duration-300"
     >
       {isDual ? (
-        isRotated ? (
+        stacked ? (
           <div className="flex flex-col h-full w-full divide-y divide-slate-200">
             <div className="h-1/2 w-full flex items-center justify-center overflow-hidden">
               {renderContent('100%')}

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import Sidebar from '@/components/Sidebar';
-import { cookies } from 'next/headers';
+import { getAuthenticatedUser } from '@/lib/auth';
 import './globals.css';
 
 const inter = Inter({
@@ -20,19 +20,7 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const cookieStore = await cookies();
-  const authSession = cookieStore.get('auth_session')?.value;
-  let currentUser = null;
-  if (authSession) {
-    try {
-      currentUser = JSON.parse(authSession);
-    } catch {
-      // Zpětná kompatibilita se starou session cookie
-      if (authSession === 'authenticated_true') {
-        currentUser = { username: 'admin', name: 'Administrátor', role: 'admin' };
-      }
-    }
-  }
+  const currentUser = await getAuthenticatedUser();
 
   return (
     <html lang="cs" className={`${inter.variable} h-full antialiased`} suppressHydrationWarning>

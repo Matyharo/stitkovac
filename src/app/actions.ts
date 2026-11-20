@@ -5,6 +5,11 @@ import { prisma } from '@/lib/db';
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
+import { createSession, SESSION_MAX_AGE, secureSessionCookie } from '@/lib/session';
+import { getAuthenticatedUser, assertAuthenticated } from '@/lib/auth';
+import { selectionMatches, storeSafetySelection } from '@/lib/safetySelection';
+import { loadApplicationSafetyCatalog, validateCustomCategory } from '@/lib/customSafetyCatalog';
+import { safetyProposal, suggestSafetyWithoutAI } from '@/lib/safetyRules';
 
 // --- AUTH UTILS ---
 export async function hashPassword(password: string): Promise<string> {
@@ -21,75 +26,15 @@ export async function verifyPassword(password: string, storedHash: string): Prom
   return verifyHash === hash;
 }
 
-export async function requireAuthenticatedSession(): Promise<{
-  authenticated: boolean;
-  username?: string;
-}> {
-  try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('auth_session')?.value;
-    if (!sessionCookie) {
-      return { authenticated: false };
-    }
-
-    if (sessionCookie === 'authenticated_true') {
-      return { authenticated: true, username: 'admin' };
-    }
-
-    const decoded = JSON.parse(sessionCookie) as { username?: unknown };
-    if (!decoded || typeof decoded.username !== 'string' || !decoded.username.trim()) {
-      return { authenticated: false };
-    }
-
-    const normalizedUsername = decoded.username.toLowerCase().trim();
-    const user = await prisma.user.findUnique({
-      where: { username: normalizedUsername },
-      select: { username: true },
-    });
-
-    if (user) {
-      return { authenticated: true, username: user.username };
-    }
-
-    // Fallback pokud v DB ještě nebyl vytvořen žádný uživatel a jde o výchozího admina
-    const userCount = await prisma.user.count();
-    const defaultUsername = (process.env.BASIC_AUTH_USER || 'admin').toLowerCase().trim();
-    if (userCount === 0 && normalizedUsername === defaultUsername) {
-      return { authenticated: true, username: defaultUsername };
-    }
-
-    return { authenticated: false };
-  } catch {
-    return { authenticated: false };
-  }
+export async function requireAuthenticatedSession(): Promise<{ authenticated: boolean; username?: string }> {
+  const user = await getAuthenticatedUser();
+  return user ? { authenticated: true, username: user.username } : { authenticated: false };
 }
 
 export async function logActivity(action: string, details: string) {
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('auth_session')?.value;
-    let username = 'neznámý';
-
-    if (sessionCookie) {
-      try {
-        const decoded = JSON.parse(sessionCookie);
-        if (decoded.username) {
-          username = decoded.username;
-        }
-      } catch {
-        if (sessionCookie === 'authenticated_true') {
-          username = 'admin';
-        }
-      }
-    }
-
-    await prisma.activityLog.create({
-      data: {
-        username,
-        action,
-        details,
-      },
-    });
+    const user = await getAuthenticatedUser();
+    await prisma.activityLog.create({ data: { username: user?.username || 'system', action, details } });
   } catch (error) {
     console.error('Failed to log activity:', error);
   }
@@ -98,6 +43,7 @@ export async function logActivity(action: string, details: string) {
 // --- PRODUCTS ACTIONS ---
 
 export async function getProducts(search?: string) {
+  await assertAuthenticated();
   try {
     if (!search || search.trim() === '') {
       return await prisma.product.findMany({
@@ -117,6 +63,7 @@ export async function getProducts(search?: string) {
 }
 
 export async function getProductById(id: string) {
+  await assertAuthenticated();
   try {
     return await prisma.product.findUnique({
       where: { id },
@@ -135,11 +82,14 @@ export async function updateProduct(id: string, data: {
   brand?: string | null;
   price?: number | null;
   safetyText?: string | null;
+  confirmedSafetyCode?: string | null;
   contactText?: string | null;
   ean?: string | null;
   note?: string | null;
 }) {
+  await assertAuthenticated();
   try {
+    const { confirmedSafetyCode, ...productData } = data;
     const rules = await getContactRules();
     const contactText = data.contactText?.trim()
       ? data.contactText
@@ -165,15 +115,19 @@ export async function updateProduct(id: string, data: {
         ? data.shortName?.trim() || null
         : existingProduct?.shortName ?? null;
 
-    const updated = await prisma.product.update({
+    const updated = await prisma.$transaction(async tx => {
+      const product = await tx.product.update({
       where: { id },
       data: {
-        ...data,
+        ...productData,
         shortName,
         description,
         contactText,
         safetyText,
       },
+    });
+      await storeSafetySelection(tx, product, confirmedSafetyCode);
+      return product;
     });
     await logActivity('PRODUCT_UPDATE', `Upraven produkt SKU: ${updated.sku} (Název: ${updated.name})`);
     revalidatePath('/products');
@@ -186,6 +140,7 @@ export async function updateProduct(id: string, data: {
 }
 
 export async function deleteProduct(id: string) {
+  await assertAuthenticated();
   try {
     const product = await prisma.product.findUnique({ where: { id } });
     await prisma.product.delete({
@@ -206,6 +161,7 @@ export async function deleteProduct(id: string) {
 }
 
 export async function deleteProducts(ids: string[]) {
+  await assertAuthenticated();
   try {
     const products = await prisma.product.findMany({ where: { id: { in: ids } } });
     await prisma.product.deleteMany({
@@ -232,11 +188,14 @@ export async function createProduct(data: {
   brand?: string | null;
   price?: number | null;
   safetyText?: string | null;
+  confirmedSafetyCode?: string | null;
   contactText?: string | null;
   ean?: string | null;
   note?: string | null;
 }) {
+  await assertAuthenticated();
   try {
+    const { confirmedSafetyCode, ...productData } = data;
     const rules = await getContactRules();
     const contactText = data.contactText?.trim()
       ? data.contactText
@@ -249,14 +208,18 @@ export async function createProduct(data: {
     const description = data.description?.trim() ? data.description.trim() : null;
     const shortName = data.shortName?.trim() ? data.shortName.trim() : null;
 
-    const created = await prisma.product.create({
+    const created = await prisma.$transaction(async tx => {
+      const product = await tx.product.create({
       data: {
-        ...data,
+        ...productData,
         shortName,
         description,
         contactText,
         safetyText,
       },
+    });
+      await storeSafetySelection(tx, product, confirmedSafetyCode);
+      return product;
     });
     await logActivity('PRODUCT_CREATE', `Vytvořen produkt SKU: ${created.sku} (Název: ${created.name})`);
     revalidatePath('/products');
@@ -307,6 +270,7 @@ export async function saveImportedProducts(
     note?: boolean;
   }
 ) {
+  await assertAuthenticated();
   try {
     let importedCount = 0;
     let updatedCount = 0;
@@ -439,6 +403,7 @@ export async function saveImportedProducts(
 }
 
 export async function clearAllProducts() {
+  await assertAuthenticated();
   try {
     await prisma.product.deleteMany({});
     await logActivity('PRODUCT_CLEAR_ALL', 'Smazána celá databáze produktů');
@@ -455,6 +420,7 @@ export async function clearAllProducts() {
 // --- TEMPLATE ACTIONS ---
 
 export async function getTemplates() {
+  await assertAuthenticated();
   try {
     let templates = await prisma.labelTemplate.findMany({
       orderBy: [
@@ -578,6 +544,7 @@ export async function getTemplates() {
 }
 
 export async function getTemplateById(id: string) {
+  await assertAuthenticated();
   try {
     return await prisma.labelTemplate.findUnique({
       where: { id },
@@ -595,6 +562,7 @@ export async function saveTemplate(
   fontConfig: object,
   layoutConfig: object
 ) {
+  await assertAuthenticated();
   try {
     const fieldsStr = JSON.stringify(fieldsConfig);
     const fontStr = JSON.stringify(fontConfig);
@@ -639,6 +607,7 @@ export async function saveTemplate(
 }
 
 export async function deleteTemplate(id: string) {
+  await assertAuthenticated();
   try {
     const template = await prisma.labelTemplate.findUnique({ where: { id } });
     await prisma.labelTemplate.delete({
@@ -658,6 +627,7 @@ export async function deleteTemplate(id: string) {
 }
 
 export async function duplicateTemplate(id: string) {
+  await assertAuthenticated();
   try {
     const original = await prisma.labelTemplate.findUnique({
       where: { id },
@@ -687,6 +657,7 @@ export async function duplicateTemplate(id: string) {
 }
 
 export async function updateTemplateOrder(orderedIds: string[]) {
+  await assertAuthenticated();
   try {
     await prisma.$transaction(
       orderedIds.map((id, index) =>
@@ -706,6 +677,7 @@ export async function updateTemplateOrder(orderedIds: string[]) {
 }
 
 export async function setDefaultTemplate(id: string) {
+  await assertAuthenticated();
   try {
     await prisma.$transaction([
       prisma.labelTemplate.updateMany({
@@ -730,6 +702,7 @@ export async function setDefaultTemplate(id: string) {
 // --- PRINT JOBS ACTIONS ---
 
 export async function getPrintJobs() {
+  await assertAuthenticated();
   try {
     return await prisma.printJob.findMany({
       orderBy: { createdAt: 'desc' },
@@ -745,6 +718,7 @@ export async function savePrintJob(
   products: { productId: string; sku: string; name: string; price: number | null; quantity: number }[],
   startPosition: number
 ) {
+  await assertAuthenticated();
   try {
     const job = await prisma.printJob.create({
       data: {
@@ -763,6 +737,7 @@ export async function savePrintJob(
 }
 
 export async function getPrintJobById(id: string) {
+  await assertAuthenticated();
   try {
     return await prisma.printJob.findUnique({
       where: { id },
@@ -774,6 +749,7 @@ export async function getPrintJobById(id: string) {
 }
 
 export async function seedSampleProducts() {
+  await assertAuthenticated();
   try {
     const samples = [
       {
@@ -909,6 +885,7 @@ function resolveSafetyTextForBrand(brand: string | null | undefined, rules: any[
 }
 
 export async function getContactRules() {
+  await assertAuthenticated();
   try {
     let rules = await prisma.contactRule.findMany({
       orderBy: [
@@ -974,6 +951,7 @@ export async function saveContactRule(data: {
   safetyText?: string | null;
   isDefault?: boolean;
 }) {
+  await assertAuthenticated();
   try {
     if (data.id) {
       const updated = await prisma.contactRule.update({
@@ -1013,6 +991,7 @@ export async function saveContactRule(data: {
 }
 
 export async function deleteContactRule(id: string) {
+  await assertAuthenticated();
   try {
     const rule = await prisma.contactRule.findUnique({ where: { id } });
     if (!rule) {
@@ -1032,6 +1011,7 @@ export async function deleteContactRule(id: string) {
 }
 
 export async function applyContactRulesToAllProducts() {
+  await assertAuthenticated();
   try {
     const rules = await getContactRules();
     const products = await prisma.product.findMany();
@@ -1066,10 +1046,12 @@ export async function applyContactRulesToAllProducts() {
 
 // Keep backward compatibility with old action
 export async function updateContactTextByBrand() {
+  await assertAuthenticated();
   return applyContactRulesToAllProducts();
 }
 
 export async function getProductIds() {
+  await assertAuthenticated();
   try {
     const products = await prisma.product.findMany({
       select: { id: true }
@@ -1085,6 +1067,7 @@ export async function applyContactRulesToBatch(
   productIds: string[],
   options?: { overwriteContacts?: boolean; overwriteSafety?: boolean }
 ) {
+  await assertAuthenticated();
   try {
     const rules = await getContactRules();
     const products = await prisma.product.findMany({
@@ -1133,6 +1116,7 @@ export interface ImportProductInput {
 }
 
 export async function analyzeImportedProducts(products: ImportProductInput[]) {
+  await assertAuthenticated();
   try {
     const newProducts: ImportProductInput[] = [];
     const updatedProducts: {
@@ -1345,16 +1329,11 @@ export async function login(username: string, password: string) {
 
     if (user && await verifyPassword(password, user.passwordHash)) {
       const cookieStore = await cookies();
-      const sessionData = {
-        username: user.username,
-        name: user.name,
-        role: user.role,
-      };
-      cookieStore.set('auth_session', JSON.stringify(sessionData), {
+      cookieStore.set('auth_session', createSession(user.username), {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
-        maxAge: 60 * 60 * 24 * 30, // 30 days
+        secure: secureSessionCookie(),
+        sameSite: 'lax',
+        maxAge: SESSION_MAX_AGE,
         path: '/',
       });
 
@@ -1382,6 +1361,7 @@ export async function logout() {
 }
 
 export async function getActivityLogs(page: number = 1, limit: number = 50, search?: string) {
+  await assertAuthenticated(true);
   try {
     const skip = (page - 1) * limit;
 
@@ -1418,6 +1398,7 @@ export async function getActivityLogs(page: number = 1, limit: number = 50, sear
 }
 
 export async function getUsers() {
+  await assertAuthenticated(true);
   try {
     const users = await prisma.user.findMany({
       orderBy: { username: 'asc' },
@@ -1430,6 +1411,7 @@ export async function getUsers() {
 }
 
 export async function createUser(data: { username: string; password: string; name: string; role?: string }) {
+  await assertAuthenticated(true);
   try {
     const existing = await prisma.user.findUnique({
       where: { username: data.username },
@@ -1457,6 +1439,7 @@ export async function createUser(data: { username: string; password: string; nam
 }
 
 export async function deleteUser(id: string) {
+  await assertAuthenticated(true);
   try {
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) return { success: false, error: 'Uživatel nenalezen.' };
@@ -1475,6 +1458,7 @@ export async function deleteUser(id: string) {
 }
 
 export async function changeUserPassword(id: string, newPassword: string) {
+  await assertAuthenticated(true);
   try {
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) return { success: false, error: 'Uživatel nenalezen.' };
@@ -1498,6 +1482,7 @@ export async function changeUserPassword(id: string, newPassword: string) {
 // ---------------------------------------------------------------------------
 
 export async function getFeedConfigAction() {
+  await assertAuthenticated();
   const { getFeedConfig } = await import('@/lib/feedSync');
   return await getFeedConfig();
 }
@@ -1509,6 +1494,7 @@ export async function saveFeedConfigAction(data: {
   checkEanValidity: boolean;
   cronSecret?: string;
 }) {
+  await assertAuthenticated(true);
   const { saveFeedConfig } = await import('@/lib/feedSync');
   const res = await saveFeedConfig(data);
   revalidatePath('/import');
@@ -1517,6 +1503,7 @@ export async function saveFeedConfigAction(data: {
 }
 
 export async function triggerFeedSyncAction(overrideUrl?: string) {
+  await assertAuthenticated();
   const { syncProductsFromFeed } = await import('@/lib/feedSync');
   const result = await syncProductsFromFeed(overrideUrl);
   revalidatePath('/import');
@@ -1526,11 +1513,13 @@ export async function triggerFeedSyncAction(overrideUrl?: string) {
 }
 
 export async function getPendingApprovalsAction() {
+  await assertAuthenticated();
   const { getPendingApprovals } = await import('@/lib/feedSync');
   return await getPendingApprovals();
 }
 
 export async function getPendingApprovalsCountAction() {
+  await assertAuthenticated();
   const { getPendingApprovalsCount } = await import('@/lib/feedSync');
   return await getPendingApprovalsCount();
 }
@@ -1545,6 +1534,7 @@ export async function approvePendingProductAction(
     ean?: string;
   }
 ) {
+  await assertAuthenticated();
   const { approvePendingProduct } = await import('@/lib/feedSync');
   const res = await approvePendingProduct(id, overrides);
   revalidatePath('/import');
@@ -1560,33 +1550,39 @@ export async function approvePendingProductAction(
 export async function suggestProductSafetyTextAction(input: {
   name: string;
   description?: string | null;
+  productId?: string;
+  currentSafetyText?: string | null;
+  mode?: 'rules' | 'ai';
 }) {
-  const auth = await requireAuthenticatedSession();
-  if (!auth.authenticated) {
-    return {
-      ok: false as const,
-      errorType: 'unauthorized' as const,
-      error: 'Pro použití AI asistenta musíte být přihlášeni v aplikaci.',
-    };
+  await assertAuthenticated();
+  try {
+    if (!input?.name?.trim()) return { ok: false as const, errorType: 'validation' as const, error: 'Zadejte název produktu.' };
+    const catalog = await loadApplicationSafetyCatalog();
+    if (input.mode !== 'ai') {
+      if (input.productId) {
+        const product = await prisma.product.findUnique({ where: { id: input.productId }, include: { safetySelection: true } });
+        const saved = product?.safetySelection;
+        const draft = { name: input.name, description: input.description, safetyText: input.currentSafetyText ?? product?.safetyText };
+        if (saved && product && selectionMatches(saved, product) && selectionMatches(saved, draft) && catalog.byCode.has(saved.code)) {
+          return safetyProposal(saved.code, 'saved', catalog, 'Použita dříve potvrzená kategorie tohoto produktu.');
+        }
+      }
+      return suggestSafetyWithoutAI(input.name, catalog);
+    }
+    const { classifyProductSafety } = await import('@/lib/safetyClassifier');
+    const result = await classifyProductSafety({ name: input.name, description: input.description }, { catalog, skipNameRules: true });
+    if (result.ok) {
+      await logActivity('AI_SAFETY_SUGGEST', `AI návrh pro "${input.name.slice(0, 50)}": ${result.code}`);
+      return { ...result, source: 'ai' as const, reason: 'Návrh AI. Před použitím zkontrolujte kategorii a text.' };
+    }
+    return result;
+  } catch (error: unknown) {
+    return { ok: false as const, errorType: 'validation' as const, error: error instanceof Error ? error.message : 'Nepodařilo se načíst pravidla.' };
   }
-
-  const { classifyProductSafety } = await import('@/lib/safetyClassifier');
-  const result = await classifyProductSafety({
-    name: input?.name ?? '',
-    description: input?.description ?? '',
-  });
-
-  if (result.ok) {
-    await logActivity(
-      'AI_SAFETY_SUGGEST',
-      `AI návrh bezpečnosti pro "${input.name.slice(0, 50)}": ${result.code} (${result.mode})`
-    );
-  }
-
-  return result;
 }
 
 export async function rejectPendingProductAction(id: string) {
+  await assertAuthenticated();
   const { rejectPendingProduct } = await import('@/lib/feedSync');
   const res = await rejectPendingProduct(id);
   revalidatePath('/import');
@@ -1594,6 +1590,7 @@ export async function rejectPendingProductAction(id: string) {
 }
 
 export async function approveAllPendingProductsAction(ids?: string[]) {
+  await assertAuthenticated();
   const { approveAllPendingProducts } = await import('@/lib/feedSync');
   const res = await approveAllPendingProducts(ids);
   revalidatePath('/import');
@@ -1603,6 +1600,7 @@ export async function approveAllPendingProductsAction(ids?: string[]) {
 }
 
 export async function rejectAllPendingProductsAction(ids?: string[]) {
+  await assertAuthenticated();
   const { rejectAllPendingProducts } = await import('@/lib/feedSync');
   const res = await rejectAllPendingProducts(ids);
   revalidatePath('/import');
@@ -1610,6 +1608,7 @@ export async function rejectAllPendingProductsAction(ids?: string[]) {
 }
 
 export async function getSyncLogsAction(limit: number = 10) {
+  await assertAuthenticated();
   const { getSyncLogs } = await import('@/lib/feedSync');
   return await getSyncLogs(limit);
 }
@@ -1620,6 +1619,7 @@ export async function shortenAndSaveProductNameAction(input: {
   brand?: string | null;
   maxChars?: number;
 }) {
+  await assertAuthenticated();
   const auth = await requireAuthenticatedSession();
   if (!auth.authenticated) {
     return {
@@ -1660,6 +1660,7 @@ export async function shortenAndSaveProductNameAction(input: {
 }
 
 export async function updateProductShortNameAction(productId: string, shortName: string | null) {
+  await assertAuthenticated();
   const auth = await requireAuthenticatedSession();
   if (!auth.authenticated) {
     return { success: false, error: 'Pro úpravu produktu musíte být přihlášeni.' };
@@ -1685,3 +1686,63 @@ export async function updateProductShortNameAction(productId: string, shortName:
 
 
 
+
+export async function previewBulkSafetyAction() {
+  await assertAuthenticated(true);
+  const { planBulkSafety } = await import('@/lib/bulkSafety');
+  const products = await prisma.product.findMany({ include: { safetySelection: true }, orderBy: { id: 'asc' } });
+  const plan = planBulkSafety(products, await loadApplicationSafetyCatalog());
+  return { token: plan.token, total: plan.total, changed: plan.changes.length, unknown: plan.unknown, review: plan.review, unchanged: plan.unchanged,
+    sample: plan.changes.slice(0, 20).map(({ sku, name, code, before, after }) => ({ sku, name, code, before, after })) };
+}
+
+export async function applyBulkSafetyAction(token: string) {
+  await assertAuthenticated(true);
+  const { planBulkSafety } = await import('@/lib/bulkSafety');
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const path = await import('node:path');
+  const result = await prisma.$transaction(async tx => {
+    const products = await tx.product.findMany({ include: { safetySelection: true }, orderBy: { id: 'asc' } });
+    const plan = planBulkSafety(products, await loadApplicationSafetyCatalog(tx));
+    if (!token || token !== plan.token) throw new Error('Produkty nebo pravidla se od náhledu změnily. Načtěte nový náhled.');
+    if (!plan.changes.length) return { changed: 0, backup: null };
+    const directory = path.join(process.cwd(), 'prisma', 'safety-backups');
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const filename = `safety-${Date.now()}-${crypto.randomUUID()}.json`;
+    await writeFile(path.join(directory, filename), JSON.stringify({ createdAt: new Date().toISOString(), changes: plan.changes }, null, 2), { mode: 0o600, flag: 'wx' });
+    for (const change of plan.changes) {
+      await tx.product.update({ where: { id: change.id }, data: { safetyText: change.after } });
+      // Rule matches are proposals, not individually confirmed categories.
+      if (change.source === 'saved') {
+        await tx.productSafetySelection.update({ where: { productId: change.id }, data: { safetyText: change.after } });
+      } else {
+        await tx.productSafetySelection.deleteMany({ where: { productId: change.id } });
+      }
+    }
+    return { changed: plan.changes.length, backup: filename };
+  }, { timeout: 120000 });
+  await logActivity('BULK_SAFETY_UPDATE', `Aktualizováno ${result.changed} textů; záloha: ${result.backup || 'beze změn'}`);
+  revalidatePath('/products');
+  revalidatePath('/print');
+  return result;
+}
+
+export async function createSafetyCategoryAction(input: { name: string; area?: string; safetyText: string; keywords?: string }) {
+  const user = await assertAuthenticated();
+  try {
+    const data = validateCustomCategory(input);
+    const catalog = await loadApplicationSafetyCatalog();
+    const { normalizeRuleText } = await import('@/lib/safetyRules');
+    if (catalog.templates.some(entry => normalizeRuleText(entry.productType) === data.nameKey)) {
+      throw new Error('Kategorie s tímto názvem již existuje. Vyberte ji ze seznamu.');
+    }
+    const code = `CUSTOM_${crypto.randomUUID().replaceAll('-', '').slice(0, 16).toUpperCase()}`;
+    await prisma.customSafetyCategory.create({ data: { ...data, code, createdBy: user.username } });
+    const updatedCatalog = await loadApplicationSafetyCatalog();
+    await logActivity('SAFETY_CATEGORY_CREATE', `Vytvořena kategorie ${data.name} (${code})`);
+    return { ...safetyProposal(code, 'manual', updatedCatalog, 'Nová vlastní kategorie. Použijte návrh a uložte produkt.'), manuallySelected: true };
+  } catch (error) {
+    const duplicate = error instanceof Error && 'code' in error && error.code === 'P2002';
+    return { ok: false as const, error: duplicate ? 'Kategorie s tímto názvem již existuje.' : error instanceof Error ? error.message : 'Kategorii se nepodařilo vytvořit.' };
+  }
+}

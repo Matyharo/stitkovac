@@ -1,5 +1,6 @@
 'use client';
 
+import SafetyCategoryTransfer from './SafetyCategoryTransfer';
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -1161,6 +1162,8 @@ export default function SettingsPage() {
         </div>
 
       </div>
+
+      <SafetyCategoryTransfer />
 
       {/* CUSTOM CONFIRM MODAL */}
       {confirmModal && confirmModal.isOpen && (

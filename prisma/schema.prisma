@@ -21,6 +21,7 @@ model Product {
   note        String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  safetySelection ProductSafetySelection?
 }
 
 model LabelTemplate {
@@ -121,3 +122,36 @@ model SyncLog {
 }
 
 
+
+model ProductSafetySelection {
+  productId   String   @id
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  code        String
+  name        String
+  description String   @default("")
+  safetyText  String
+  confirmedAt DateTime @default(now())
+}
+
+model CustomSafetyCategory {
+  code       String   @id
+  name       String
+  nameKey    String   @unique
+  area       String   @default("Ostatní")
+  safetyText String
+  keywords   String   @default("[]")
+  createdBy  String
+  createdAt  DateTime @default(now())
+}
+
+model SafetyCatalogState {
+  id      String @id
+  content String
+}
+
+model SafetyCatalogImport {
+  id        String   @id @default(uuid())
+  previous  String
+  createdBy String
+  createdAt DateTime @default(now())
+}

@@ -171,3 +171,25 @@ Podrobný technický popis databázového schématu, správy Excel číselníku 
 ## 📄 Licence
 
 Tento projekt je licencován pod licencí MIT – podrobnosti naleznete v souboru [LICENSE](LICENSE).
+
+### Vlastní bezpečnostní kategorie
+
+U návrhu bezpečnostního textu produktu lze zvolit „Chybí vhodná kategorie? Vytvořit novou“.
+Přihlášený uživatel zadá název, oblast, vlastní bezpečnostní text a volitelná rozpoznávací slova oddělená čárkami.
+Vytvoření zpřístupní kategorii ostatním uživatelům; produkt se změní až po použití návrhu a uložení.
+Slova odpovídají celým slovům nebo spojením bez ohledu na velikost písmen a diakritiku. Varianty (např. zrcátko, zrcadlo, mirror) zadejte samostatně.
+Při kolizi stejně prioritních pravidel se automatický výběr neprovede.
+
+Excel zůstává základním katalogem. Vlastní kategorie se ukládají samostatně do SQLite v tabulce `CustomSafetyCategory`, nikoliv do verzovaného Excelu.
+Jsou součástí databázové zálohy a používají se v ručním výběru, pravidlech, volitelném AI posouzení i hromadné aktualizaci.
+Před prvním spuštěním aktualizace spusťte `npx prisma db push` a sestavte aplikaci.
+
+### Import a export kategorií v Excelu
+
+V Nastavení systému je sekce „Kategorie a bezpečnostní texty - Excel“ dostupná pro import/export správcům.
+Export `.xlsx` obsahuje aktuální základní i vlastní kategorie a pravidla rozpoznávání. Při úpravách zachovejte list `Šablony`, hlavičky a stávající kódy.
+Import nejprve ukáže počty přidání/aktualizací. Po potvrzení atomicky uloží katalog do databáze, včetně zálohy předchozího katalogu (`SafetyCatalogImport`).
+Chybějící kategorie se nemažou. Přítomný list `Pravidla` nahradí pravidla importovaných kategorií; pokud chybí, pravidla se zachovají.
+Povoleny jsou soubory `.xlsx` do 2 MB, bez vzorců, nejvýše 1000 datových řádků na list. Produkty a jejich uložené texty se importem nemění.
+Pro pozdější použití nových textů lze samostatně spustit hromadnou aktualizaci produktů s náhledem.
+Import nepozměňuje verzovaný soubor v `data/safety/`. Databázový katalog má přednost a je součástí zálohy celé databáze.

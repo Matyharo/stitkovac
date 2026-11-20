@@ -16,6 +16,7 @@ import {
   concatTransformationMatrix,
 } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
+import { getDualLayoutDirection } from './labelLayout';
 
 export interface PrintItem {
   id: string;
@@ -476,6 +477,7 @@ function drawLabel(
 
   const isRotated = (layout.labelRotation || 0) === 90;
   const isDual    = !!(layout.dualLayout);
+  const stacked = getDualLayoutDirection(layout) === 'stacked';
   const padding   = 4;
 
   // ── Outer graphics state: clipping only ────────────────────────────────────
@@ -534,7 +536,7 @@ function drawLabel(
       concatTransformationMatrix(0, -1, 1, 0, x, y + labelH)
     );
 
-    if (isDual) {
+    if (isDual && stacked) {
       // Split along draw_y (visual height = long dimension / 2)
       const halfH = labelW / 2 - 0.5;
       // Top half (visual): draw_y from labelW/2+0.5 to labelW
@@ -549,6 +551,15 @@ function drawLabel(
         originX: padding, originY: 0,
         contentW: labelH - 2*padding, totalH: halfH, rightEdgeX: labelH - padding,
       }, regularFont, boldFont, true);
+    } else if (isDual) {
+      const halfW = (labelH - 2 * padding - 1) / 2;
+      drawLabelContent(page, product, fields, fonts, {
+        originX: padding, originY: 0, contentW: halfW, totalH: labelW, rightEdgeX: labelH / 2 - 0.5,
+      }, regularFont, boldFont, true);
+      page.drawLine({ start: { x: labelH / 2, y: 0 }, end: { x: labelH / 2, y: labelW }, thickness: 0.3, color: rgb(0.75, 0.75, 0.75) });
+      drawLabelContent(page, product, fields, fonts, {
+        originX: labelH / 2 + 0.5, originY: 0, contentW: halfW, totalH: labelW, rightEdgeX: labelH - padding,
+      }, regularFont, boldFont, true);
     } else {
       drawLabelContent(page, product, fields, fonts, {
         originX: padding, originY: 0,
@@ -561,7 +572,18 @@ function drawLabel(
 
   } else {
     // ── Normal (landscape) mode ────────────────────────────────────────────
-    if (isDual) {
+    if (isDual && stacked) {
+      const halfH = labelH / 2 - 0.5;
+      drawLabelContent(page, product, fields, fonts, {
+        originX: x + padding, originY: y + labelH / 2 + 0.5,
+        contentW: labelW - 2 * padding, totalH: halfH, rightEdgeX: x + labelW - padding,
+      }, regularFont, boldFont, false);
+      page.drawLine({ start: { x, y: y + labelH / 2 }, end: { x: x + labelW, y: y + labelH / 2 }, thickness: 0.3, color: rgb(0.75, 0.75, 0.75) });
+      drawLabelContent(page, product, fields, fonts, {
+        originX: x + padding, originY: y,
+        contentW: labelW - 2 * padding, totalH: halfH, rightEdgeX: x + labelW - padding,
+      }, regularFont, boldFont, false);
+    } else if (isDual) {
       const halfW = (labelW - 2*padding - 1) / 2;
       // Left half
       drawLabelContent(page, product, fields, fonts, {
@@ -690,16 +712,11 @@ export function measureSingleLabelOverflow(
   const isDual = !!layout.dualLayout;
   const padding = 4;
 
-  let contentW: number;
-  let totalH: number;
-
-  if (isRotated) {
-    contentW = labelH - 2 * padding;
-    totalH = isDual ? labelW / 2 - 0.5 : labelW;
-  } else {
-    contentW = isDual ? (labelW - 2 * padding - 1) / 2 : labelW - 2 * padding;
-    totalH = labelH;
-  }
+  const stacked = getDualLayoutDirection(layout) === 'stacked';
+  const visualW = isRotated ? labelH : labelW;
+  const visualH = isRotated ? labelW : labelH;
+  const contentW = isDual && !stacked ? (visualW - 2 * padding - 1) / 2 : visualW - 2 * padding;
+  const totalH = isDual && stacked ? visualH / 2 - 0.5 : visualH;
 
   const alignment = fonts.textAlignment || 'left';
   let currentY = totalH - padding;
