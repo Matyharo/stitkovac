@@ -7,6 +7,7 @@ import type { planSafetyWorkbookImport } from '@/lib/safetyWorkbook';
 type Preview = Omit<ReturnType<typeof planSafetyWorkbookImport>, 'catalog'>;
 export default function SafetyCategoryTransfer() {
   const inputId = useId();
+  const [history, setHistory] = useState<{ id: string; createdAt: string; createdBy: string }[] | null>(null);
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -73,6 +74,8 @@ export default function SafetyCategoryTransfer() {
         <label className="flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-600"><input type="checkbox" disabled={busy} checked={confirmed} onChange={e => setConfirmed(e.target.checked)} className="mt-0.5" />Potvrzuji import kategorií a pravidel. Původní katalog se zálohuje. Texty u produktů se nezmění.</label>
         <button type="button" disabled={busy || !confirmed} onClick={() => file && submit(file, true)} className="w-full rounded-xl bg-indigo-600 px-4 py-2.5 font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40">Potvrdit import</button>
       </div>}
+      <button type="button" disabled={busy} className="text-xs font-semibold text-indigo-700" onClick={async () => { try { const r = await fetch('/api/safety-categories?history=1'); if (!r.ok) throw new Error('Historie není dostupná.'); setHistory(await r.json()); } catch (e) { setError(e instanceof Error ? e.message : 'Historie není dostupná.'); } }}>Předchozí verze katalogu</button>
+      {history && <div className="space-y-2 text-xs">{history.length ? history.map(version => <div key={version.id} className="flex items-center justify-between gap-2"><span>{new Date(version.createdAt).toLocaleString('cs-CZ')} - {version.createdBy}</span><button type="button" disabled={busy} className="text-indigo-700 underline" onClick={async () => { setBusy(true); try { const r = await fetch(`/api/safety-categories?version=${encodeURIComponent(version.id)}`); if (!r.ok) throw new Error('Verzi nelze načíst.'); const selected = new File([await r.blob()], 'obnova-kategorii.xlsx'); setFile(selected); setPreview(null); await submit(selected); } catch { setError('Verzi se nepodařilo načíst.'); } finally { setBusy(false); } }}>Načíst k obnově</button></div>) : <p>Žádné předchozí importy.</p>}</div>}
       <details className="text-xs text-slate-400"><summary className="cursor-pointer">Jak soubor připravit</summary><p className="mt-2 leading-relaxed">Nejprve si stáhněte export. Zachovejte kódy kategorií a hlavičky sloupců. Kategorie chybějící v souboru se nemažou. Přenos je dostupný správci.</p></details>
     </MaintenanceDialog>
   </section>;

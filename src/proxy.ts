@@ -5,16 +5,11 @@ import { verifySession } from './lib/session';
 export function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname;
 
-  const isAuthenticated = Boolean(verifySession(req.cookies.get('auth_session')?.value));
+  const isAuthenticated = Boolean(verifySession(req.cookies.get('auth_session')?.value)?.sessionId);
+  if (path === '/api/cron/sync-feed' || path === '/api/health') return NextResponse.next();
 
-  // Pokud jde o přihlašovací stránku
-  if (path === '/login') {
-    if (isAuthenticated) {
-      // Pokud je již přihlášený, přesměrujeme ho na nástěnku
-      return NextResponse.redirect(new URL('/', req.url));
-    }
-    return NextResponse.next();
-  }
+  // Login remains reachable for expired or revoked database sessions.
+  if (path === '/login') return NextResponse.next();
 
   // Pokud není přihlášený, přesměrujeme na /login
   if (!isAuthenticated) {

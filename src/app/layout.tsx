@@ -26,7 +26,7 @@ export default async function RootLayout({
     <html lang="cs" className={`${inter.variable} h-full antialiased`} suppressHydrationWarning>
       <body className="h-full overflow-hidden flex bg-slate-50 text-slate-900 font-sans">
         <Sidebar currentUser={currentUser} />
-        <main className="flex-1 flex flex-col min-w-0 overflow-y-auto bg-slate-50/50">
+        <main className="pt-12 md:pt-0 flex-1 flex flex-col min-w-0 overflow-y-auto bg-slate-50/50">
           {children}
         </main>
       </body>

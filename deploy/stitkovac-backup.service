@@ -1,0 +1,12 @@
+[Unit]
+Description=Konzistentni zaloha databaze Stitkovace
+After=network-online.target
+[Service]
+Type=oneshot
+User=maty
+WorkingDirectory=/home/maty/stitkovac
+EnvironmentFile=/home/maty/stitkovac/.env
+ExecStart=/usr/bin/node --import tsx scripts/backup.ts
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

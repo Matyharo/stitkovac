@@ -5,6 +5,11 @@ import { prisma } from '@/lib/db';
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
+import { validateProductInput, validateTemplate } from '@/lib/inputValidation';
+import { hashPassword, verifyPassword, validatePassword } from '@/lib/passwords';
+import { logActivity } from '@/lib/activity';
+import { consumeLoginAttempt, clearLoginAttempts } from '@/lib/loginThrottle';
+import { verifySession } from '@/lib/session';
 import { createSession, SESSION_MAX_AGE, secureSessionCookie } from '@/lib/session';
 import { getAuthenticatedUser, assertAuthenticated } from '@/lib/auth';
 import { selectionMatches, storeSafetySelection } from '@/lib/safetySelection';
@@ -12,32 +17,9 @@ import { loadApplicationSafetyCatalog, validateCustomCategory } from '@/lib/cust
 import { safetyProposal, suggestSafetyWithoutAI } from '@/lib/safetyRules';
 
 // --- AUTH UTILS ---
-export async function hashPassword(password: string): Promise<string> {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
-  return `${salt}:${hash}`;
-}
-
-export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
-  const parts = storedHash.split(':');
-  if (parts.length !== 2) return false;
-  const [salt, hash] = parts;
-  const verifyHash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
-  return verifyHash === hash;
-}
-
 export async function requireAuthenticatedSession(): Promise<{ authenticated: boolean; username?: string }> {
   const user = await getAuthenticatedUser();
   return user ? { authenticated: true, username: user.username } : { authenticated: false };
-}
-
-export async function logActivity(action: string, details: string) {
-  try {
-    const user = await getAuthenticatedUser();
-    await prisma.activityLog.create({ data: { username: user?.username || 'system', action, details } });
-  } catch (error) {
-    console.error('Failed to log activity:', error);
-  }
 }
 
 // --- PRODUCTS ACTIONS ---
@@ -58,7 +40,7 @@ export async function getProducts(search?: string) {
     );
   } catch (error) {
     console.error('Error fetching products:', error);
-    return [];
+    throw new Error('Data se nepodařilo načíst. Zkuste to znovu.');
   }
 }
 
@@ -83,13 +65,17 @@ export async function updateProduct(id: string, data: {
   price?: number | null;
   safetyText?: string | null;
   confirmedSafetyCode?: string | null;
+  expectedUpdatedAt?: string;
   contactText?: string | null;
   ean?: string | null;
   note?: string | null;
 }) {
   await assertAuthenticated();
   try {
-    const { confirmedSafetyCode, ...productData } = data;
+    data = validateProductInput(data);
+    const { confirmedSafetyCode, expectedUpdatedAt, ...productData } = data;
+    const allowed = new Set(['sku','name','shortName','description','brand','price','safetyText','contactText','ean','note']);
+    for (const key of Object.keys(productData)) if (!allowed.has(key)) throw new Error('Neplatné pole produktu.');
     const rules = await getContactRules();
     const contactText = data.contactText?.trim()
       ? data.contactText
@@ -117,7 +103,7 @@ export async function updateProduct(id: string, data: {
 
     const updated = await prisma.$transaction(async tx => {
       const product = await tx.product.update({
-      where: { id },
+      where: { id, updatedAt: new Date(expectedUpdatedAt || existingProduct!.updatedAt.toISOString()) },
       data: {
         ...productData,
         shortName,
@@ -135,7 +121,7 @@ export async function updateProduct(id: string, data: {
     return { success: true, product: updated };
   } catch (error: any) {
     console.error(`Error updating product ${id}:`, error);
-    return { success: false, error: error.message || 'Nepodařilo se aktualizovat produkt.' };
+    return { success: false, error: (error.code === 'P2025' ? 'Produkt mezitím změnil jiný uživatel. Načtěte jej znovu.' : error.message) || 'Nepodařilo se aktualizovat produkt.' };
   }
 }
 
@@ -189,13 +175,18 @@ export async function createProduct(data: {
   price?: number | null;
   safetyText?: string | null;
   confirmedSafetyCode?: string | null;
+  expectedUpdatedAt?: string;
   contactText?: string | null;
   ean?: string | null;
   note?: string | null;
 }) {
   await assertAuthenticated();
   try {
-    const { confirmedSafetyCode, ...productData } = data;
+    data = validateProductInput(data);
+    const { confirmedSafetyCode, expectedUpdatedAt, ...productData } = data;
+    void expectedUpdatedAt;
+    const allowed = new Set(['sku','name','shortName','description','brand','price','safetyText','contactText','ean','note']);
+    for (const key of Object.keys(productData)) if (!allowed.has(key)) throw new Error('Neplatné pole produktu.');
     const rules = await getContactRules();
     const contactText = data.contactText?.trim()
       ? data.contactText
@@ -272,6 +263,9 @@ export async function saveImportedProducts(
 ) {
   await assertAuthenticated();
   try {
+    if (!Array.isArray(products) || products.length > 10000) throw new Error('Import může obsahovat nejvýše 10000 produktů.');
+    products = products.map(validateProductInput);
+    if (new Set(products.map(p => p.sku)).size !== products.length) throw new Error('Soubor obsahuje duplicitní SKU. Opravte jej před importem.');
     let importedCount = 0;
     let updatedCount = 0;
     const rules = await getContactRules();
@@ -286,6 +280,7 @@ export async function saveImportedProducts(
     const existingMap = new Map(existingProducts.map(p => [p.sku, p]));
 
     // Use a transaction or single operations to upsert
+    await prisma.$transaction(async tx => {
     for (const p of products) {
       if (!p.sku || !p.name) continue; // Skip invalid rows
 
@@ -350,8 +345,8 @@ export async function saveImportedProducts(
           note !== existing.note;
 
         if (hasChanges) {
-          await prisma.product.update({
-            where: { sku: p.sku },
+          await tx.product.update({
+            where: { sku: p.sku, updatedAt: existing.updatedAt },
             data: {
               name,
               description: description || null,
@@ -375,7 +370,7 @@ export async function saveImportedProducts(
           ? p.safetyText
           : resolveSafetyTextForBrand(brand, rules);
 
-        await prisma.product.create({
+        await tx.product.create({
           data: {
             sku: p.sku,
             name: p.name,
@@ -392,6 +387,8 @@ export async function saveImportedProducts(
       }
     }
 
+    }, { timeout: 60000 });
+
     await logActivity('PRODUCT_IMPORT', `Importováno/aktualizováno ${importedCount + updatedCount} produktů (Nové: ${importedCount}, Upravené: ${updatedCount})`);
     revalidatePath('/products');
     revalidatePath('/');
@@ -403,7 +400,7 @@ export async function saveImportedProducts(
 }
 
 export async function clearAllProducts() {
-  await assertAuthenticated();
+  await assertAuthenticated(true);
   try {
     await prisma.product.deleteMany({});
     await logActivity('PRODUCT_CLEAR_ALL', 'Smazána celá databáze produktů');
@@ -539,7 +536,7 @@ export async function getTemplates() {
     return templates;
   } catch (error) {
     console.error('Error fetching templates:', error);
-    return [];
+    throw new Error('Data se nepodařilo načíst. Zkuste to znovu.');
   }
 }
 
@@ -564,6 +561,8 @@ export async function saveTemplate(
 ) {
   await assertAuthenticated();
   try {
+    validateTemplate(fieldsConfig, fontConfig, layoutConfig);
+    if (!name.trim() || name.length > 100) throw new Error('Vyplňte název šablony (max. 100 znaků).');
     const fieldsStr = JSON.stringify(fieldsConfig);
     const fontStr = JSON.stringify(fontConfig);
     const layoutStr = JSON.stringify(layoutConfig);
@@ -710,19 +709,25 @@ export async function getPrintJobs() {
     });
   } catch (error) {
     console.error('Error fetching print jobs:', error);
-    return [];
+    throw new Error('Data se nepodařilo načíst. Zkuste to znovu.');
   }
 }
 
 export async function savePrintJob(
   products: { productId: string; sku: string; name: string; price: number | null; quantity: number }[],
-  startPosition: number
+  startPosition: number,
+  snapshot?: { template: { id: string; name: string; fieldsConfig: string; fontConfig: string; layoutConfig: string }; fonts: Record<string, number> }
 ) {
   await assertAuthenticated();
   try {
+    if (snapshot) validateTemplate(JSON.parse(snapshot.template.fieldsConfig), JSON.parse(snapshot.template.fontConfig), JSON.parse(snapshot.template.layoutConfig));
+    if (snapshot && JSON.stringify(snapshot).length > 750000) throw new Error('Snímek šablony je příliš velký.');
+    if (!Number.isInteger(startPosition) || startPosition < 1 || startPosition > 5000 || !Array.isArray(products) || products.length > 10000 || products.some(p => !Number.isInteger(p.quantity) || p.quantity < 1 || p.quantity > 10000) || products.reduce((sum, p) => sum + p.quantity, 0) > 10000) throw new Error('Neplatné nebo příliš velké tiskové zadání.');
+    if (JSON.stringify(products).length > 900000) throw new Error('Tisková úloha je příliš velká. Rozdělte ji na menší části.');
     const job = await prisma.printJob.create({
       data: {
         products: JSON.stringify(products),
+        snapshot: snapshot ? JSON.stringify(snapshot) : null,
         startPosition,
       },
     });
@@ -749,7 +754,7 @@ export async function getPrintJobById(id: string) {
 }
 
 export async function seedSampleProducts() {
-  await assertAuthenticated();
+  await assertAuthenticated(true);
   try {
     const samples = [
       {
@@ -951,7 +956,7 @@ export async function saveContactRule(data: {
   safetyText?: string | null;
   isDefault?: boolean;
 }) {
-  await assertAuthenticated();
+  await assertAuthenticated(true);
   try {
     if (data.id) {
       const updated = await prisma.contactRule.update({
@@ -991,7 +996,7 @@ export async function saveContactRule(data: {
 }
 
 export async function deleteContactRule(id: string) {
-  await assertAuthenticated();
+  await assertAuthenticated(true);
   try {
     const rule = await prisma.contactRule.findUnique({ where: { id } });
     if (!rule) {
@@ -1011,7 +1016,7 @@ export async function deleteContactRule(id: string) {
 }
 
 export async function applyContactRulesToAllProducts() {
-  await assertAuthenticated();
+  await assertAuthenticated(true);
   try {
     const rules = await getContactRules();
     const products = await prisma.product.findMany();
@@ -1046,7 +1051,7 @@ export async function applyContactRulesToAllProducts() {
 
 // Keep backward compatibility with old action
 export async function updateContactTextByBrand() {
-  await assertAuthenticated();
+  await assertAuthenticated(true);
   return applyContactRulesToAllProducts();
 }
 
@@ -1067,7 +1072,7 @@ export async function applyContactRulesToBatch(
   productIds: string[],
   options?: { overwriteContacts?: boolean; overwriteSafety?: boolean }
 ) {
-  await assertAuthenticated();
+  await assertAuthenticated(true);
   try {
     const rules = await getContactRules();
     const products = await prisma.product.findMany({
@@ -1291,45 +1296,25 @@ export async function analyzeImportedProducts(products: ImportProductInput[]) {
 
 export async function login(username: string, password: string) {
   try {
-    // Normalizace stávajících uživatelských jmen v DB na malá písmena
-    const allUsers = await prisma.user.findMany();
-    for (const u of allUsers) {
-      if (u.username !== u.username.toLowerCase()) {
-        try {
-          await prisma.user.update({
-            where: { id: u.id },
-            data: { username: u.username.toLowerCase() },
-          });
-        } catch (e) {
-          console.error(`Failed to normalize username for ${u.username}`, e);
-        }
-      }
-    }
-
-    // Auto-seed default admin if table is empty
-    const userCount = await prisma.user.count();
-    if (userCount === 0) {
-      const defaultUsername = (process.env.BASIC_AUTH_USER || 'admin').toLowerCase().trim();
-      const defaultPassword = process.env.BASIC_AUTH_PASSWORD || 'stitkovac2026';
-      const hashed = await hashPassword(defaultPassword);
-      await prisma.user.create({
-        data: {
-          username: defaultUsername,
-          passwordHash: hashed,
-          name: 'Administrátor',
-          role: 'admin',
-        },
-      });
-    }
-
+    if (typeof username !== 'string' || typeof password !== 'string' || username.length > 100 || password.length > 256) return { success: false, error: 'Nesprávné přihlašovací údaje.' };
     const normalizedUsername = username.toLowerCase().trim();
+    if (!await consumeLoginAttempt(normalizedUsername)) return { success: false, error: 'Příliš mnoho pokusů. Zkuste to za 15 minut.' };
     const user = await prisma.user.findUnique({
       where: { username: normalizedUsername },
     });
 
     if (user && await verifyPassword(password, user.passwordHash)) {
+      if (!user.passwordHash.startsWith('scrypt$')) {
+        const upgraded = await hashPassword(password);
+        if (upgraded) await prisma.user.update({ where: { id: user.id }, data: { passwordHash: upgraded } });
+      }
+      await clearLoginAttempts(normalizedUsername);
+      const sessionId = crypto.randomUUID();
+      await prisma.userSession.deleteMany({ where: { expiresAt: { lt: new Date() } } });
+      const signedSession = createSession(user.username, Date.now(), sessionId);
+      await prisma.userSession.create({ data: { id: sessionId, userId: user.id, expiresAt: new Date(Date.now() + SESSION_MAX_AGE * 1000) } });
       const cookieStore = await cookies();
-      cookieStore.set('auth_session', createSession(user.username), {
+      cookieStore.set('auth_session', signedSession, {
         httpOnly: true,
         secure: secureSessionCookie(),
         sameSite: 'lax',
@@ -1352,6 +1337,8 @@ export async function logout() {
   try {
     await logActivity('LOGOUT', 'Uživatel se odhlásil');
     const cookieStore = await cookies();
+    const sessionId = verifySession(cookieStore.get('auth_session')?.value)?.sessionId;
+    if (sessionId) await prisma.userSession.deleteMany({ where: { id: sessionId } });
     cookieStore.delete('auth_session');
     return { success: true };
   } catch (error: any) {
@@ -1413,6 +1400,9 @@ export async function getUsers() {
 export async function createUser(data: { username: string; password: string; name: string; role?: string }) {
   await assertAuthenticated(true);
   try {
+    data = { ...data, username: data.username.trim().toLowerCase() };
+    validatePassword(data.password);
+    if (!/^[a-z0-9._-]{2,100}$/.test(data.username) || !data.name.trim() || !['admin', 'user'].includes(data.role || 'user')) throw new Error('Neplatné údaje uživatele.');
     const existing = await prisma.user.findUnique({
       where: { username: data.username },
     });
@@ -1444,7 +1434,7 @@ export async function deleteUser(id: string) {
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) return { success: false, error: 'Uživatel nenalezen.' };
 
-    if (user.username === 'admin') {
+    if (user.role === 'admin' && await prisma.user.count({ where: { role: 'admin' } }) <= 1) {
       return { success: false, error: 'Hlavního administrátora "admin" nelze smazat.' };
     }
 
@@ -1463,11 +1453,12 @@ export async function changeUserPassword(id: string, newPassword: string) {
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) return { success: false, error: 'Uživatel nenalezen.' };
 
+    validatePassword(newPassword);
     const passwordHash = await hashPassword(newPassword);
-    await prisma.user.update({
-      where: { id },
-      data: { passwordHash },
-    });
+    await prisma.$transaction([
+      prisma.user.update({ where: { id }, data: { passwordHash } }),
+      prisma.userSession.deleteMany({ where: { userId: id } }),
+    ]);
 
     await logActivity('USER_PASSWORD_CHANGE', `Změněno heslo pro uživatele: ${user.username}`);
     return { success: true };
@@ -1484,7 +1475,9 @@ export async function changeUserPassword(id: string, newPassword: string) {
 export async function getFeedConfigAction() {
   await assertAuthenticated();
   const { getFeedConfig } = await import('@/lib/feedSync');
-  return await getFeedConfig();
+  const user = await assertAuthenticated();
+  const config = await getFeedConfig();
+  return user.role === 'admin' ? config : { ...config, url: '', cronSecret: '' };
 }
 
 export async function saveFeedConfigAction(data: {
@@ -1503,7 +1496,7 @@ export async function saveFeedConfigAction(data: {
 }
 
 export async function triggerFeedSyncAction(overrideUrl?: string) {
-  await assertAuthenticated();
+  await assertAuthenticated(true);
   const { syncProductsFromFeed } = await import('@/lib/feedSync');
   const result = await syncProductsFromFeed(overrideUrl);
   revalidatePath('/import');
@@ -1640,18 +1633,7 @@ export async function shortenAndSaveProductNameAction(input: {
     return res;
   }
 
-  await prisma.product.update({
-    where: { id: input.productId },
-    data: { shortName: res.shortName },
-  });
-
-  await logActivity(
-    'AI_NAME_SHORTEN',
-    `AI zkrácení názvu pro "${input.name.slice(0, 40)}" -> "${res.shortName}"`
-  );
-  revalidatePath('/products');
-  revalidatePath('/print');
-
+  await logActivity('AI_NAME_SUGGEST', `Návrh zkrácení názvu produktu ${input.productId}`);
   return {
     ok: true as const,
     shortName: res.shortName,
@@ -1668,6 +1650,7 @@ export async function updateProductShortNameAction(productId: string, shortName:
 
   try {
     const clean = shortName?.trim() || null;
+    if (clean && clean.length > 120) throw new Error('Zkrácený název může mít nejvýše 120 znaků.');
     const updated = await prisma.product.update({
       where: { id: productId },
       data: { shortName: clean },
@@ -1745,4 +1728,10 @@ export async function createSafetyCategoryAction(input: { name: string; area?: s
     const duplicate = error instanceof Error && 'code' in error && error.code === 'P2002';
     return { ok: false as const, error: duplicate ? 'Kategorie s tímto názvem již existuje.' : error instanceof Error ? error.message : 'Kategorii se nepodařilo vytvořit.' };
   }
+}
+
+export async function getProductPage(input: { search?: string; page?: number; pageSize?: number; filters?: string[]; sort?: string }) {
+  await assertAuthenticated();
+  const { queryProductPage } = await import('@/lib/productPage');
+  return queryProductPage(input);
 }

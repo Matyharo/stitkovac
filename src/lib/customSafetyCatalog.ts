@@ -20,7 +20,11 @@ export function validateCustomCategory(input: { name: string; area?: string; saf
 export async function loadApplicationSafetyCatalog(db: CatalogDb = prisma): Promise<SafetyTemplatesCatalog> {
   const stored = await db.safetyCatalogState.findUnique({ where: { id: 'main' } });
   const saved = stored ? JSON.parse(stored.content) as Omit<SafetyTemplatesCatalog, 'byCode'> : null;
-  const base = saved ? { ...saved, byCode: new Map(saved.templates.map(entry => [entry.code, entry])) } : loadSafetyTemplates();
+  const builtIn = loadSafetyTemplates();
+  const combined = new Map(builtIn.templates.map(entry => [entry.code, entry]));
+  for (const entry of saved?.templates || []) combined.set(entry.code, entry);
+  const savedCodes = new Set(saved?.templates.map(entry => entry.code) || []);
+  const base = saved ? { ...saved, templates: [...combined.values()], byCode: combined, nameRules: [...(builtIn.nameRules || []).filter(rule => !savedCodes.has(rule.code)), ...(saved.nameRules || [])] } : builtIn;
   const custom = (await db.customSafetyCategory.findMany({ orderBy: { code: 'asc' } })).filter(category => !base.byCode.has(category.code));
   const entries = custom.map(category => ({ code: category.code, area: category.area, productType: category.name, safetyText: category.safetyText,
     mode: 'Návrh ke schválení' as const, clues: (JSON.parse(category.keywords) as string[]).join(', '),

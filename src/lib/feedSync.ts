@@ -1,7 +1,10 @@
+import { isValidGtin } from './gtin';
 import { prisma } from '@/lib/db';
-import { Product, ContactRule, PendingProductApproval } from '@prisma/client';
+import { Product, ContactRule, PendingProductApproval, Prisma } from '@prisma/client';
 import { fetchAndParseShoptetFeed, FeedProductItem } from './importers/ShoptetFeedParser';
-import { logActivity } from '@/app/actions';
+import { validateProductInput } from './inputValidation';
+import { logActivity } from '@/lib/activity';
+import { randomBytes } from 'node:crypto';
 
 const DEFAULT_FEED_URL = process.env.SHOPTET_FEED_URL || '';
 
@@ -37,7 +40,7 @@ export async function getFeedConfig(): Promise<FeedConfigData> {
         autoApplySafe: true,
         priceThresholdPercent: 30.0,
         checkEanValidity: true,
-        cronSecret: 'shoptet-feed-sync-secret',
+        cronSecret: randomBytes(32).toString('hex'),
         syncStatus: 'idle',
       },
     });
@@ -52,6 +55,7 @@ export async function saveFeedConfig(data: {
   checkEanValidity: boolean;
   cronSecret?: string;
 }) {
+  if (data.cronSecret && !/^[A-Za-z0-9_-]{32,128}$/.test(data.cronSecret.trim())) throw new Error('Tajný klíč musí mít 32 až 128 písmen, číslic, pomlček nebo podtržítek.');
   const current = await getFeedConfig();
   const updated = await prisma.feedConfig.update({
     where: { id: current.id },
@@ -126,11 +130,9 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
   const config = await getFeedConfig();
   const feedUrl = overrideUrl?.trim() || config.url;
 
-  // Nastavíme status na running
-  await prisma.feedConfig.update({
-    where: { id: config.id },
-    data: { syncStatus: 'running', syncMessage: 'Probíhá stahování a zpracování feedu...' },
-  });
+  const lockId = randomBytes(16).toString('hex');
+  const lock = await prisma.feedConfig.updateMany({ where: { id: config.id, OR: [{ lockExpiresAt: null }, { lockExpiresAt: { lt: new Date() } }] }, data: { lockId, lockExpiresAt: new Date(Date.now() + 5 * 60000), syncStatus: 'running', syncMessage: 'Probíhá synchronizace...' } });
+  if (!lock.count) return { success: false, totalFetched: 0, autoCreated: 0, autoUpdated: 0, unchanged: 0, pendingReview: 0, durationMs: 0, error: 'Jiná synchronizace již běží.' };
 
   try {
     const parsed = await fetchAndParseShoptetFeed(feedUrl);
@@ -164,6 +166,8 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
     }
 
     const fetchedProducts = parsed.products;
+    if (fetchedProducts.length > 10000 || new Set(fetchedProducts.map(p => p.sku)).size !== fetchedProducts.length) throw new Error('Feed má příliš mnoho produktů nebo duplicitní SKU.');
+    for (const product of fetchedProducts) validateProductInput(product);
     const rules = await prisma.contactRule.findMany();
 
     // Načteme všechny existující produkty z DB najednou do mapy podle SKU
@@ -191,7 +195,7 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
       const itemDescription = (item.description ?? item.rawDescription)?.trim() || undefined;
       const existing = existingMap.get(item.sku);
       const isEanInvalid =
-        config.checkEanValidity && item.ean && item.ean.length !== 13 && !/^\d{8}$/.test(item.ean);
+        config.checkEanValidity && item.ean && !isValidGtin(item.ean);
 
       if (!existing) {
         // NOVÝ PRODUKT
@@ -357,11 +361,12 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
       }
     }
 
+    await prisma.$transaction(async tx => {
     // Provedeme zápisy do databáze v bezpečných dávkách (SQLite parametr limit)
     const CHUNK_SIZE = 100;
     for (let i = 0; i < productsToCreate.length; i += CHUNK_SIZE) {
       const chunk = productsToCreate.slice(i, i + CHUNK_SIZE);
-      await prisma.product.createMany({
+      await tx.product.createMany({
         data: chunk,
       });
     }
@@ -370,14 +375,15 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
     const UPDATE_BATCH = 50;
     for (let i = 0; i < productsToUpdate.length; i += UPDATE_BATCH) {
       const batch = productsToUpdate.slice(i, i + UPDATE_BATCH);
-      await Promise.all(
+      const results = await Promise.all(
         batch.map((updateItem) =>
-          prisma.product.update({
-            where: { id: updateItem.id },
+          tx.product.updateMany({
+            where: { id: updateItem.id, updatedAt: existingProducts.find(p => p.id === updateItem.id)!.updatedAt },
             data: updateItem.data,
           })
         )
       );
+      if (results.some(result => !result.count)) throw new Error('Produkt byl během synchronizace upraven. Spusťte nový náhled/synchronizaci.');
     }
 
     // Uložíme položky ke schválení v dávkách
@@ -385,7 +391,7 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
       const batch = approvalsToUpsert.slice(i, i + UPDATE_BATCH);
       await Promise.all(
         batch.map((app) =>
-          prisma.pendingProductApproval.upsert({
+          tx.pendingProductApproval.upsert({
             where: { sku: app.sku },
             update: {
               name: app.name,
@@ -405,6 +411,8 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
         )
       );
     }
+
+    }, { timeout: 60000 });
 
     const durationMs = Date.now() - startTime;
     const summaryMsg = `Synchronizace dokončena za ${(durationMs / 1000).toFixed(1)}s: ${autoCreated} nových, ${autoUpdated} aktualizováno, ${pendingReview} vyžaduje schválení, ${unchanged} beze změny (celkem ${fetchedProducts.length}).`;
@@ -475,7 +483,10 @@ export async function syncProductsFromFeed(overrideUrl?: string): Promise<SyncRe
       durationMs,
       error: errMsg,
     };
+  } finally {
+    await prisma.feedConfig.updateMany({ where: { id: config.id, lockId }, data: { lockId: null, lockExpiresAt: null } });
   }
+
 }
 
 /**
@@ -565,88 +576,39 @@ function resolveTextsForApprovedItem(
  * Schválí konkrétní položku z fronty a zapíše ji do tabulky Product.
  * Umožňuje volitelně předat upravené hodnoty (overrides).
  */
-export async function approvePendingProduct(
-  id: string,
-  overrides?: {
-    name?: string;
-    description?: string;
-    brand?: string;
-    price?: number;
-    ean?: string;
+type ApprovalOverrides = { name?: string; description?: string; brand?: string; price?: number; ean?: string };
+async function approveWithinTransaction(tx: Prisma.TransactionClient, id: string, overrides?: ApprovalOverrides) {
+  const item = await tx.pendingProductApproval.findUnique({ where: { id } });
+  if (!item || item.status !== 'pending') throw new Error('Položka již byla zpracována. Obnovte frontu.');
+  const existing = await tx.product.findUnique({ where: { sku: item.sku } });
+  const rules = await tx.contactRule.findMany();
+  const data = validateProductInput({
+    sku: item.sku, name: overrides?.name?.trim() || item.name,
+    description: overrides?.description !== undefined ? overrides.description.trim() || null : item.description || existing?.description || null,
+    brand: overrides?.brand !== undefined ? overrides.brand.trim() || null : item.brand,
+    price: overrides?.price !== undefined ? overrides.price : item.price,
+    ean: overrides?.ean !== undefined ? overrides.ean.trim() || null : item.ean,
+    note: item.note ?? existing?.note ?? null,
+  });
+  if (existing && item.oldData) {
+    const old = JSON.parse(item.oldData) as Record<string, unknown>;
+    for (const field of ['name','description','brand','price','ean'] as const) {
+      if (field in old && (existing[field] ?? null) !== (old[field] ?? null) && (data[field] ?? null) !== (existing[field] ?? null)) {
+        throw new Error('Produkt byl po vytvoření návrhu ručně upraven. Znovu synchronizujte feed a posuďte aktuální změny.');
+      }
+    }
   }
-) {
+  const texts = resolveTextsForApprovedItem(item, existing, data.brand, rules);
+  if (existing) await tx.product.update({ where: { id: existing.id, updatedAt: existing.updatedAt }, data: { ...data, ...texts } });
+  else await tx.product.create({ data: { ...data, ...texts } });
+  await tx.pendingProductApproval.delete({ where: { id, updatedAt: item.updatedAt } });
+}
+export async function approvePendingProduct(id: string, overrides?: ApprovalOverrides) {
   try {
-    const item = await prisma.pendingProductApproval.findUnique({
-      where: { id },
-    });
-    if (!item) {
-      return { success: false, error: 'Položka ke schválení nebyla nalezena.' };
-    }
-
-    const [rules, existingProduct] = await Promise.all([
-      prisma.contactRule.findMany(),
-      prisma.product.findUnique({ where: { sku: item.sku } }),
-    ]);
-
-    const finalName = overrides?.name?.trim() || item.name;
-    const finalDescription =
-      overrides?.description !== undefined
-        ? overrides.description.trim() || null
-        : item.description?.trim() || existingProduct?.description || null;
-    const finalBrand = overrides?.brand !== undefined ? overrides.brand.trim() || null : item.brand;
-    const finalPrice = overrides?.price !== undefined ? overrides.price : item.price;
-    const finalEan = overrides?.ean !== undefined ? overrides.ean.trim() || null : item.ean;
-
-    const { safetyText, contactText } = resolveTextsForApprovedItem(item, existingProduct, finalBrand, rules);
-
-    await prisma.product.upsert({
-      where: { sku: item.sku },
-      update: {
-        name: finalName,
-        description: finalDescription,
-        brand: finalBrand,
-        price: finalPrice,
-        ean: finalEan,
-        note: item.note ?? existingProduct?.note ?? null,
-        contactText: contactText,
-        safetyText: safetyText,
-      },
-      create: {
-        sku: item.sku,
-        name: finalName,
-        description: finalDescription,
-        brand: finalBrand,
-        price: finalPrice,
-        ean: finalEan,
-        note: item.note,
-        contactText: contactText || null,
-        safetyText: safetyText || null,
-      },
-    });
-
-    // Odstraníme položku ze schvalovací fronty
-    await prisma.pendingProductApproval.delete({
-      where: { id },
-    });
-
-    // Zkontrolujeme, zda nezůstala fronta prázdná - pokud ano, aktualizujeme status feedu na success
-    const remainingCount = await prisma.pendingProductApproval.count({ where: { status: 'pending' } });
-    if (remainingCount === 0) {
-      const cfg = await getFeedConfig();
-      await prisma.feedConfig.update({
-        where: { id: cfg.id },
-        data: {
-          syncStatus: 'success',
-          syncMessage: 'Všechny změny z feedu byly schváleny a zpracovány.',
-        },
-      });
-    }
-
-    await logActivity('APPROVAL_APPROVED', `Schválen produkt SKU: ${item.sku} (${finalName})`);
+    await prisma.$transaction(tx => approveWithinTransaction(tx, id, overrides));
+    await logActivity('APPROVAL_APPROVED', `Schválena položka ${id}`);
     return { success: true };
-  } catch (error: any) {
-    return { success: false, error: error?.message || 'Chyba při schvalování položky.' };
-  }
+  } catch (error: unknown) { return { success: false, error: error instanceof Error ? error.message : 'Schválení se nezdařilo.' }; }
 }
 
 /**
@@ -689,72 +651,14 @@ export async function rejectPendingProduct(id: string) {
  */
 export async function approveAllPendingProducts(ids?: string[]) {
   try {
-    const where = ids && ids.length > 0 ? { id: { in: ids }, status: 'pending' } : { status: 'pending' };
-    const items = await prisma.pendingProductApproval.findMany({ where });
-
-    if (items.length === 0) {
-      return { success: true, count: 0 };
-    }
-
-    const rules = await prisma.contactRule.findMany();
-    const skus = items.map((i) => i.sku);
-    const existingProducts = await prisma.product.findMany({
-      where: { sku: { in: skus } },
-    });
-    const existingMap = new Map<string, Product>(existingProducts.map((p) => [p.sku, p]));
-
-    for (const item of items) {
-      const existingProduct = existingMap.get(item.sku) ?? null;
-      const finalDescription = item.description?.trim() || existingProduct?.description || null;
-      const { safetyText, contactText } = resolveTextsForApprovedItem(item, existingProduct, item.brand, rules);
-
-      await prisma.product.upsert({
-        where: { sku: item.sku },
-        update: {
-          name: item.name,
-          description: finalDescription,
-          brand: item.brand,
-          price: item.price,
-          ean: item.ean,
-          note: item.note ?? existingProduct?.note ?? null,
-          contactText: contactText,
-          safetyText: safetyText,
-        },
-        create: {
-          sku: item.sku,
-          name: item.name,
-          description: finalDescription,
-          brand: item.brand,
-          price: item.price,
-          ean: item.ean,
-          note: item.note,
-          contactText: contactText || null,
-          safetyText: safetyText || null,
-        },
-      });
-    }
-
-    await prisma.pendingProductApproval.deleteMany({
-      where: { id: { in: items.map((i: PendingProductApproval) => i.id) } },
-    });
-
-    const remainingCount = await prisma.pendingProductApproval.count({ where: { status: 'pending' } });
-    if (remainingCount === 0) {
-      const cfg = await getFeedConfig();
-      await prisma.feedConfig.update({
-        where: { id: cfg.id },
-        data: {
-          syncStatus: 'success',
-          syncMessage: 'Všechny čekající položky byly schváleny a zapsány do katalogu.',
-        },
-      });
-    }
-
-    await logActivity('APPROVAL_BULK_APPROVED', `Hromadně schváleno ${items.length} produktů`);
-    return { success: true, count: items.length };
-  } catch (error: any) {
-    return { success: false, error: error?.message || 'Chyba při hromadném schvalování.' };
-  }
+    const count = await prisma.$transaction(async tx => {
+      const items = await tx.pendingProductApproval.findMany({ where: { status: 'pending', ...(ids?.length ? { id: { in: ids } } : {}) }, select: { id: true } });
+      for (const item of items) await approveWithinTransaction(tx, item.id);
+      return items.length;
+    }, { timeout: 60000 });
+    await logActivity('APPROVAL_BULK_APPROVED', `Hromadně schváleno ${count} položek`);
+    return { success: true, count };
+  } catch (error: unknown) { return { success: false, error: error instanceof Error ? error.message : 'Schválení se nezdařilo.' }; }
 }
 
 /**

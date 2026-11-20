@@ -1,4 +1,5 @@
 'use client';
+import AccessibleModal from '@/components/AccessibleModal';
 
 import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
@@ -8,6 +9,7 @@ import {
   savePrintJob,
   getPrintJobById,
   updateProduct,
+  updateProductShortNameAction,
   shortenAndSaveProductNameAction
 } from '@/app/actions';
 import {
@@ -38,6 +40,7 @@ import {
 } from 'lucide-react';
 
 interface Product {
+  updatedAt?: string | Date;
   id: string;
   sku: string;
   name: string;
@@ -77,6 +80,8 @@ function PrintPageContent() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+
+  useEffect(() => () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); }, [pdfUrl]);
 
   // States for one-off font size adjustment & product preview selection
   const [customFontSizes, setCustomFontSizes] = useState({
@@ -141,6 +146,9 @@ function PrintPageContent() {
         return;
       }
 
+      if (!window.confirm(`Použít zkrácený název?\n\n${res.shortName}\n\nOvěřte variantu, množství a jednotky.`)) return;
+      const saved = await updateProductShortNameAction(target.id, res.shortName);
+      if (!saved.success) throw new Error(saved.error);
       setPrintList((prev) =>
         prev.map((p) => (p.id === target.id ? { ...p, shortName: res.shortName } : p))
       );
@@ -166,6 +174,7 @@ function PrintPageContent() {
     const priceNum = editingProduct.price !== null ? Number(editingProduct.price) : null;
 
     const res = await updateProduct(editingProduct.id, {
+        expectedUpdatedAt: editingProduct.updatedAt ? new Date(editingProduct.updatedAt).toISOString() : undefined,
       sku: editingProduct.sku,
       name: editingProduct.name,
       shortName: editingProduct.shortName,
@@ -325,11 +334,22 @@ function PrintPageContent() {
           name: string;
           price: number | null;
           quantity: number;
+          snapshotVersion?: number;
+          templateSnapshot?: LabelTemplate;
+          fontSnapshot?: typeof customFontSizes;
         }[];
 
         // Map to PrintItem with full product details
         const loadedList: PrintItem[] = [];
+        const snapshot = job.snapshot ? JSON.parse(job.snapshot) as { template: LabelTemplate; fonts: typeof customFontSizes } : null;
+        if (snapshot?.template) {
+          const savedTemplate = snapshot.template;
+          setTemplates(prev => [...prev.filter(t => t.id !== savedTemplate.id), savedTemplate]);
+          setSelectedTemplateId(savedTemplate.id);
+          if (snapshot.fonts) setCustomFontSizes(snapshot.fonts);
+        }
         for (const jp of jobProducts) {
+          if (jp.snapshotVersion) { loadedList.push({ ...jp, id: jp.productId } as PrintItem); continue; }
           const prod = allProducts.find((p) => p.id === jp.productId || p.sku === jp.sku);
           if (prod) {
             loadedList.push({
@@ -524,6 +544,8 @@ function PrintPageContent() {
     setPdfUrl(null);
 
     try {
+      const blocking = await detectSafetyTextOverflows(printList, template, customFontSizes);
+      if (blocking.length) { setOverflowItems(blocking); throw new Error('Některé texty se nevejdou na štítek. Upravte šablonu nebo velikosti písma.'); }
       // Generate PDF client side
       const pdfBytes = await generateLabelsPdf(printList, template, startPosition, customFontSizes);
       
@@ -533,15 +555,9 @@ function PrintPageContent() {
       setPdfUrl(url);
 
       // Save print history in database
-      const printJobProducts = printList.map((p) => ({
-        productId: p.id,
-        sku: p.sku,
-        name: p.name,
-        price: p.price ?? null,
-        quantity: p.quantity,
-      }));
-
-      await savePrintJob(printJobProducts, startPosition);
+      const printJobProducts = printList.map((p) => ({ ...p, price: p.price ?? null, productId: p.id, snapshotVersion: 1 }));
+      const savedJob = await savePrintJob(printJobProducts, startPosition, { template, fonts: customFontSizes });
+      if (!savedJob.success) throw new Error('PDF je připravené, ale historii tisku se nepodařilo uložit.');
       setSuccess('Tiskové PDF bylo úspěšně vygenerováno!');
     } catch (err: any) {
       setError(`Generování PDF selhalo: ${err.message || 'Neočekávaná chyba'}`);
@@ -1265,7 +1281,7 @@ function PrintPageContent() {
           <div className="space-y-2">
             <button
               onClick={handleGeneratePdf}
-              disabled={printList.length === 0 || generating}
+              disabled={printList.length === 0 || generating || overflowItems.length > 0}
               className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold shadow-md shadow-indigo-600/10 transition-all duration-205 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
               {generating ? (
@@ -1346,7 +1362,7 @@ function PrintPageContent() {
 
       {/* Quick Edit Modal */}
       {editingProduct && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+        <AccessibleModal onClose={() => setEditingProduct(null)} className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl p-6 border border-slate-100 animate-in zoom-in-95 duration-200 text-slate-800 text-left flex flex-col max-h-[85vh]">
             {/* Header - Pinned */}
             <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4 shrink-0">
@@ -1518,7 +1534,7 @@ function PrintPageContent() {
               </div>
             </form>
           </div>
-        </div>
+        </AccessibleModal>
       )}
     </div>
   );

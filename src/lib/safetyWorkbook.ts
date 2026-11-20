@@ -39,6 +39,7 @@ export function planSafetyWorkbookImport(buffer: Uint8Array, current: SafetyTemp
   }
   const incoming = parseAndValidateSafetyWorkbook(workbook, 'Importovaný Excel');
   if (incoming.templates.some(t => !/^[A-Z][A-Z0-9_]{0,63}$/.test(t.code) || Object.values(t).some(v => String(v).length > 8000))) throw new Error('Neplatný kód kategorie nebo příliš dlouhá hodnota.');
+  if (incoming.byCode.get('NEURCENO')?.mode !== 'Ruční posouzení') throw new Error('Kategorie NEURCENO musí zůstat v režimu Ruční posouzení.');
   const entries = new Map(current.templates.map(t => [t.code, t]));
   let added = 0, updated = 0, unchanged = 0;
   const sample: { code: string; name: string; change: string }[] = [];

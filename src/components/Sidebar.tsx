@@ -1,4 +1,5 @@
 'use client';
+import AccessibleModal from '@/components/AccessibleModal';
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
@@ -13,7 +14,8 @@ import {
   Tag,
   LogOut,
   ScrollText,
-  User
+  User,
+  Menu
 } from 'lucide-react';
 import { logout, getPendingApprovalsCountAction } from '@/app/actions';
 
@@ -28,6 +30,7 @@ interface SidebarProps {
 export default function Sidebar({ currentUser }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState<number>(0);
 
@@ -69,9 +72,13 @@ export default function Sidebar({ currentUser }: SidebarProps) {
   ];
 
   return (
-    <aside className="w-64 h-screen sticky top-0 bg-slate-900 text-slate-100 flex flex-col border-r border-slate-800 shrink-0 z-30">
+    <>
+    <button type="button" aria-label="Otevřít navigaci" aria-expanded={mobileOpen} aria-controls="main-navigation" className="md:hidden fixed top-2 left-3 z-40 rounded-lg border border-slate-200 bg-white p-2 text-slate-700 shadow-sm" onClick={() => setMobileOpen(!mobileOpen)}><Menu className="h-5 w-5" /></button>
+    {mobileOpen && <button type="button" aria-label="Zavřít navigaci" className="fixed inset-0 z-40 bg-slate-900/40 md:hidden" onClick={() => setMobileOpen(false)} />}
+    <aside id="main-navigation" className={`w-64 h-dvh fixed inset-y-0 left-0 md:sticky md:top-0 bg-slate-900 text-slate-100 flex flex-col border-r border-slate-800 shrink-0 z-50 md:z-30 transition-transform md:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+
       {/* Brand Header */}
-      <Link href="/" className="h-16 flex items-center px-6 border-b border-slate-800 bg-slate-950/40 gap-3 hover:bg-slate-950/60 transition-colors group">
+      <Link onClick={() => setMobileOpen(false)} href="/" className="h-16 flex items-center px-6 border-b border-slate-800 bg-slate-950/40 gap-3 hover:bg-slate-950/60 transition-colors group">
         <div className="bg-indigo-600 p-2 rounded-lg text-white shadow-md shadow-indigo-600/20 transition-transform group-hover:scale-105">
           <Tag className="w-5 h-5" />
         </div>
@@ -85,13 +92,13 @@ export default function Sidebar({ currentUser }: SidebarProps) {
 
       {/* Nav List */}
       <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
-        {navItems.map((item) => {
+        {navItems.filter(item => currentUser?.role === 'admin' || !['/logs', '/settings'].includes(item.href)).map((item) => {
           const Icon = item.icon;
           const isActive = pathname === item.href;
 
           return (
             <Link
-              key={item.href}
+              onClick={() => setMobileOpen(false)} key={item.href}
               href={item.href}
               className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 group relative ${
                 isActive
@@ -157,7 +164,7 @@ export default function Sidebar({ currentUser }: SidebarProps) {
       </div>
 
       {showLogoutConfirm && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+        <AccessibleModal onClose={() => setShowLogoutConfirm(false)} className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl max-w-sm w-full shadow-2xl p-6 border border-slate-100 animate-in zoom-in-95 duration-200 text-slate-800 text-left">
             <div className="flex items-center gap-3 text-amber-600 mb-4">
               <LogOut className="w-6 h-6 shrink-0" />
@@ -183,8 +190,9 @@ export default function Sidebar({ currentUser }: SidebarProps) {
               </button>
             </div>
           </div>
-        </div>
+        </AccessibleModal>
       )}
     </aside>
+    </>
   );
 }
