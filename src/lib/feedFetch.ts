@@ -1,6 +1,15 @@
 import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
+import { isIP, type LookupFunction } from 'node:net';
+import type { LookupAddress } from 'node:dns';
 import https from 'node:https';
+
+// Node may request a single address or an array for automatic family selection.
+export function createPinnedLookup(chosen: LookupAddress): LookupFunction {
+  return (_host, options, callback) => {
+    if (options.all) callback(null, [chosen]);
+    else callback(null, chosen.address, chosen.family);
+  };
+}
 
 export function isPublicAddress(address: string): boolean {
   if (isIP(address) === 4) {
@@ -20,7 +29,7 @@ export async function fetchFeedBytes(input: string, redirects = 0): Promise<Buff
   if (!addresses.length || addresses.some(a => !isPublicAddress(a.address))) throw new Error('Interní síťové adresy nejsou pro feed povoleny.');
   const chosen = addresses[0];
   return new Promise((resolve, reject) => {
-    const request = https.get(url, { headers: { 'User-Agent': 'Stitkovac-Sync/1.0', Accept: '*/*' }, lookup: (_host, _options, callback) => callback(null, chosen.address, chosen.family) }, response => {
+    const request = https.get(url, { headers: { 'User-Agent': 'Stitkovac-Sync/1.0', Accept: '*/*' }, lookup: createPinnedLookup(chosen) }, response => {
       const status = response.statusCode || 0;
       if (status >= 300 && status < 400 && response.headers.location) {
         response.resume();
