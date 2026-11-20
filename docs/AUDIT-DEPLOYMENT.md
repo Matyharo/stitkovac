@@ -22,7 +22,7 @@ Tato verze mění autentizaci a databázové schéma. Pouhé nahrazení souborů
 
 1. Připravte samostatný checkout nové verze a nejprve proveďte `npm ci`. Zachovejte stávající .env mimo Git. DATABASE_URL musí být absolutní cesta ke správné produkční databázi.
 2. Zastavte `stitkovac`: `sudo systemctl stop stitkovac`. Před změnou si uložte cestu původního checkoutu, jeho commit a konfiguraci služby. Nekopírujte běžící databázi samotným `cp`.
-3. V novém checkoutu s produkční .env spusťte `npx prisma generate` a `npm run db:deploy`. Skript nejprve zálohuje existující databázi, u posledního schématu bez migrací označí baseline a aplikuje změny. Pokud rozpoznání selže, nepoužívejte reset ani ruční vymazání databáze.
+3. V novém checkoutu s produkční .env spusťte `npx prisma generate` a `npm run db:deploy`. Skript nejprve zálohuje existující databázi, u schématu bez historie nejprve zkontroluje původní sloupce a indexy, doplní chybějící tabulky a bezpečně přidatelné sloupce, označí baseline a aplikuje změny. Žádné existující sloupce ani tabulky nemaže. Nekompatibilní typy nebo chybějící povinné sloupce bez výchozí hodnoty převod zastaví před změnami. Pokud rozpoznání selže, nepoužívejte reset ani ruční vymazání databáze.
 4. Zkontrolujte zálohu a `DATABASE_URL`. Spusťte `npm run build`. Až úspěšný build dovoluje spustit službu.
 5. Ověřte `sudo systemctl start stitkovac`, `systemctl status stitkovac`, `curl --fail http://127.0.0.1:3000/api/health`, přihlášení, seznam výrobků, náhled a tisk PDF, návrh bezpečnostního textu a testovací import. Cron nově používá POST a hlavičku Bearer.
 6. Nikdy na existující produkci nespouštějte seed. Pro novou prázdnou instalaci vyžaduje seed vlastní BASIC_AUTH_PASSWORD; žádné známé heslo neexistuje.

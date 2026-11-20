@@ -1,3 +1,4 @@
+import { prepareLegacyBaseline } from './legacyBaseline';
 import { prisma } from '../src/lib/db';
 import { createDatabaseSnapshot } from '../src/lib/backup';
 import { resolve } from 'node:path';
@@ -13,7 +14,7 @@ async function main() {
       await createDatabaseSnapshot(path);
       console.log(`Záloha před migrací: ${path}`);
       if (!existing.has('_prisma_migrations')) {
-        if (!['CustomSafetyCategory', 'SafetyCatalogState', 'SafetyCatalogImport'].every(t => existing.has(t))) throw new Error('Databáze neodpovídá poslední verzi aplikace. Migrace byla zastavena, záloha je zachovaná.');
+        await prepareLegacyBaseline(prisma);
         execFileSync(process.execPath, [resolve('node_modules/prisma/build/index.js'), 'migrate', 'resolve', '--applied', '20261119000000_baseline'], { stdio: 'inherit' });
       }
     }
