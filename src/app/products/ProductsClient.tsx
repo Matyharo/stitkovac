@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useTransition } from 'react';
 import Link from 'next/link';
 import BulkSafety from './BulkSafety';
+import CreateSafetyCategory from './CreateSafetyCategory';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
   getProducts,
@@ -596,7 +597,7 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
         >
           <label className="block text-[11px] font-bold text-indigo-950">
             {prominent
-              ? 'Vyberte kategorii výrobku. Text se načte z tabulky:'
+              ? 'Vyberte kategorii výrobku. Text se načte z katalogu kategorií:'
               : 'Změnit kategorii výrobku ručně:'}
           </label>
           <select
@@ -619,6 +620,11 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
         </div>
       );
     };
+
+    const createCategoryControl = <CreateSafetyCategory key={targetKey} onCreated={(result) => {
+      setAiVerifyConfirmed(false);
+      setAiProposal({ ...activeProposal, result });
+    }} />;
 
     // Technická nebo validační chyba (nedostupná Ollama, chybějící model, timeout, prázdný název)
     if (!res.ok) {
@@ -645,6 +651,7 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
             </button>
           </div>
           {renderManualCategorySelector(true)}
+          {createCategoryControl}
           <div className="flex items-center justify-end gap-2 pt-1">
             <button
               type="button"
@@ -785,6 +792,7 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
             )}
 
             {renderManualCategorySelector(false, res.code)}
+            {createCategoryControl}
 
             <div className="flex items-center justify-end gap-2 pt-1">
               <button
@@ -817,6 +825,7 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
         {isManualMode && (
           <div className="space-y-2.5">
             {renderManualCategorySelector(true, res.code)}
+            {createCategoryControl}
             <div className="p-3 rounded-lg bg-white border border-rose-200 text-slate-800">
               <p className="font-semibold text-rose-900">
                 {res.code === 'NEURCENO' ? 'Vyberte kategorii výrobku nebo využijte volitelné posouzení pomocí AI.' : `Pro tuto kategorii (${res.productType}) se automatický text nevkládá. Vyžaduje ruční posouzení.`}
@@ -849,6 +858,7 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
               </p>
             </div>
             {renderManualCategorySelector(false, res.code)}
+            {createCategoryControl}
             <div className="flex justify-end">
               <button
                 type="button"

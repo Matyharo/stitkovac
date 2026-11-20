@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import { loadSafetyTemplates } from './safetyTemplates';
+import { loadApplicationSafetyCatalog } from './customSafetyCatalog';
 
 type Input = { name: string; description?: string | null; safetyText?: string | null };
 type Selection = { code: string; name: string; description: string; safetyText: string };
@@ -17,7 +17,7 @@ export async function storeSafetySelection(
 ) {
   const previous = await tx.productSafetySelection.findUnique({ where: { productId: product.id } });
   if (confirmedCode) {
-    const entry = loadSafetyTemplates().byCode.get(confirmedCode);
+    const entry = (await loadApplicationSafetyCatalog(tx)).byCode.get(confirmedCode);
     if (!entry || !['Návrh ke schválení', 'Ověřit konkrétní výrobek'].includes(entry.mode) || entry.safetyText !== (product.safetyText || '').trim()) {
       throw new Error('Vybraná kategorie neodpovídá potvrzenému textu. Vyberte návrh znovu.');
     }

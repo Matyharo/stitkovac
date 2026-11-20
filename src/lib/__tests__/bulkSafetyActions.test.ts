@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { prisma } from '../db';
 import { assertAuthenticated } from '../auth';
 import { writeFile } from 'node:fs/promises';
-import { previewBulkSafetyAction, applyBulkSafetyAction } from '@/app/actions';
+import { previewBulkSafetyAction, applyBulkSafetyAction, createSafetyCategoryAction, suggestProductSafetyTextAction } from '@/app/actions';
 
 const fixture = await vi.hoisted(async () => {
   const fs = await import('node:fs');
@@ -39,6 +39,7 @@ beforeEach(async () => {
   vi.mocked(assertAuthenticated).mockResolvedValue({ username: 'test', role: 'admin', name: 'Test' });
   vi.mocked(writeFile).mockReset().mockResolvedValue();
   await prisma.product.deleteMany();
+  await prisma.customSafetyCategory.deleteMany();
   await prisma.product.createMany({ data: [{ id: 'known', sku: 'known', name: 'Natáčky na řasy', safetyText: 'Původní' }, { id: 'unknown', sku: 'unknown', name: 'Neznámý výrobek', safetyText: 'Výchozí' }] });
 });
 describe('bulk safety server actions', () => {
@@ -81,7 +82,52 @@ describe('bulk safety server actions', () => {
     vi.mocked(assertAuthenticated).mockRejectedValue(new Error('Unauthorized'));
     await expect(previewBulkSafetyAction()).rejects.toThrow('Unauthorized');
     await expect(applyBulkSafetyAction('token')).rejects.toThrow('Unauthorized');
+    await expect(createSafetyCategoryAction({ name: 'Test', safetyText: 'Text výrobce.' })).rejects.toThrow('Unauthorized');
     expect(assertAuthenticated).toHaveBeenCalledWith(true);
     expect(writeFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('custom safety categories', () => {
+  it('creates a persistent category available in rules, dropdown, bulk update and saved selection', async () => {
+    const created = await createSafetyCategoryAction({ name: 'Kosmetická zrcátka', safetyText: 'Vlastní text podle podkladů výrobce.', keywords: 'zrcátko, zrcadlo, mirror' });
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error(created.error);
+    expect(await prisma.customSafetyCategory.count()).toBe(1);
+    await prisma.product.update({ where: { id: 'unknown' }, data: { name: 'Zola zrcátko s pouzdrem' } });
+    const suggested = await suggestProductSafetyTextAction({ name: 'Zola zrcátko s pouzdrem' });
+    expect(suggested.ok && suggested.code).toBe(created.code);
+    expect(suggested.ok && suggested.categories.some(c => c.code === created.code)).toBe(true);
+    const preview = await previewBulkSafetyAction();
+    expect(preview.sample.some(p => p.code === created.code)).toBe(true);
+    const { storeSafetySelection } = await import('../safetySelection');
+    await prisma.$transaction(async tx => {
+      const product = await tx.product.update({ where: { id: 'unknown' }, data: { safetyText: created.safetyText } });
+      await storeSafetySelection(tx, product, created.code);
+    });
+    const saved = await suggestProductSafetyTextAction({ productId: 'unknown', name: 'Zola zrcátko s pouzdrem', description: '', currentSafetyText: created.safetyText });
+    expect(saved.ok && saved.source).toBe('saved');
+    expect(saved.ok && saved.code).toBe(created.code);
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ message: { content: JSON.stringify({ code: created.code }) } }), { status: 200 }));
+    try {
+      const aiResult = await suggestProductSafetyTextAction({ name: 'Zola zrcátko s pouzdrem', mode: 'ai' });
+      expect(aiResult.ok && aiResult.code).toBe(created.code);
+      expect(aiResult.ok && aiResult.safetyText).toBe(created.safetyText);
+    } finally { fetch.mockRestore(); }
+
+  });
+  it('rejects duplicate normalized names and invalid input', async () => {
+    await createSafetyCategoryAction({ name: 'Zrcátka', safetyText: 'Text dodaný výrobcem.' });
+    const duplicate = await createSafetyCategoryAction({ name: 'ZRCATKA', safetyText: 'Jiný text výrobce.' });
+    expect(duplicate.ok).toBe(false);
+    expect((await createSafetyCategoryAction({ name: '', safetyText: '' })).ok).toBe(false);
+    expect(await prisma.customSafetyCategory.count()).toBe(1);
+  });
+  it('does not change the product merely by creating a category', async () => {
+    const category = await createSafetyCategoryAction({ name: 'Zrcátka', safetyText: 'Text dodaný výrobcem.' });
+    expect(category.ok).toBe(true);
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: 'unknown' } })).safetyText).toBe('Výchozí');
+    const suggested = await suggestProductSafetyTextAction({ name: 'Zola zrcátko s pouzdrem' });
+    expect(suggested.ok && suggested.code).toBe('NEURCENO');
   });
 });

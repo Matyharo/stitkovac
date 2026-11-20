@@ -171,3 +171,15 @@ Podrobný technický popis databázového schématu, správy Excel číselníku 
 ## 📄 Licence
 
 Tento projekt je licencován pod licencí MIT – podrobnosti naleznete v souboru [LICENSE](LICENSE).
+
+### Vlastní bezpečnostní kategorie
+
+U návrhu bezpečnostního textu produktu lze zvolit „Chybí vhodná kategorie? Vytvořit novou“.
+Přihlášený uživatel zadá název, oblast, vlastní bezpečnostní text a volitelná rozpoznávací slova oddělená čárkami.
+Vytvoření zpřístupní kategorii ostatním uživatelům; produkt se změní až po použití návrhu a uložení.
+Slova odpovídají celým slovům nebo spojením bez ohledu na velikost písmen a diakritiku. Varianty (např. zrcátko, zrcadlo, mirror) zadejte samostatně.
+Při kolizi stejně prioritních pravidel se automatický výběr neprovede.
+
+Excel zůstává základním katalogem. Vlastní kategorie se ukládají samostatně do SQLite v tabulce `CustomSafetyCategory`, nikoliv do verzovaného Excelu.
+Jsou součástí databázové zálohy a používají se v ručním výběru, pravidlech, volitelném AI posouzení i hromadné aktualizaci.
+Před prvním spuštěním aktualizace spusťte `npx prisma db push` a sestavte aplikaci.

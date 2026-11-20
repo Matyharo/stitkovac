@@ -8,7 +8,7 @@ import crypto from 'crypto';
 import { createSession, SESSION_MAX_AGE, secureSessionCookie } from '@/lib/session';
 import { getAuthenticatedUser, assertAuthenticated } from '@/lib/auth';
 import { selectionMatches, storeSafetySelection } from '@/lib/safetySelection';
-import { loadSafetyTemplates } from '@/lib/safetyTemplates';
+import { loadApplicationSafetyCatalog, validateCustomCategory } from '@/lib/customSafetyCatalog';
 import { safetyProposal, suggestSafetyWithoutAI } from '@/lib/safetyRules';
 
 // --- AUTH UTILS ---
@@ -1557,7 +1557,7 @@ export async function suggestProductSafetyTextAction(input: {
   await assertAuthenticated();
   try {
     if (!input?.name?.trim()) return { ok: false as const, errorType: 'validation' as const, error: 'Zadejte název produktu.' };
-    const catalog = loadSafetyTemplates();
+    const catalog = await loadApplicationSafetyCatalog();
     if (input.mode !== 'ai') {
       if (input.productId) {
         const product = await prisma.product.findUnique({ where: { id: input.productId }, include: { safetySelection: true } });
@@ -1691,7 +1691,7 @@ export async function previewBulkSafetyAction() {
   await assertAuthenticated(true);
   const { planBulkSafety } = await import('@/lib/bulkSafety');
   const products = await prisma.product.findMany({ include: { safetySelection: true }, orderBy: { id: 'asc' } });
-  const plan = planBulkSafety(products, loadSafetyTemplates());
+  const plan = planBulkSafety(products, await loadApplicationSafetyCatalog());
   return { token: plan.token, total: plan.total, changed: plan.changes.length, unknown: plan.unknown, review: plan.review, unchanged: plan.unchanged,
     sample: plan.changes.slice(0, 20).map(({ sku, name, code, before, after }) => ({ sku, name, code, before, after })) };
 }
@@ -1703,7 +1703,7 @@ export async function applyBulkSafetyAction(token: string) {
   const path = await import('node:path');
   const result = await prisma.$transaction(async tx => {
     const products = await tx.product.findMany({ include: { safetySelection: true }, orderBy: { id: 'asc' } });
-    const plan = planBulkSafety(products, loadSafetyTemplates());
+    const plan = planBulkSafety(products, await loadApplicationSafetyCatalog(tx));
     if (!token || token !== plan.token) throw new Error('Produkty nebo pravidla se od náhledu změnily. Načtěte nový náhled.');
     if (!plan.changes.length) return { changed: 0, backup: null };
     const directory = path.join(process.cwd(), 'prisma', 'safety-backups');
@@ -1725,4 +1725,24 @@ export async function applyBulkSafetyAction(token: string) {
   revalidatePath('/products');
   revalidatePath('/print');
   return result;
+}
+
+export async function createSafetyCategoryAction(input: { name: string; area?: string; safetyText: string; keywords?: string }) {
+  const user = await assertAuthenticated();
+  try {
+    const data = validateCustomCategory(input);
+    const catalog = await loadApplicationSafetyCatalog();
+    const { normalizeRuleText } = await import('@/lib/safetyRules');
+    if (catalog.templates.some(entry => normalizeRuleText(entry.productType) === data.nameKey)) {
+      throw new Error('Kategorie s tímto názvem již existuje. Vyberte ji ze seznamu.');
+    }
+    const code = `CUSTOM_${crypto.randomUUID().replaceAll('-', '').slice(0, 16).toUpperCase()}`;
+    await prisma.customSafetyCategory.create({ data: { ...data, code, createdBy: user.username } });
+    const updatedCatalog = await loadApplicationSafetyCatalog();
+    await logActivity('SAFETY_CATEGORY_CREATE', `Vytvořena kategorie ${data.name} (${code})`);
+    return { ...safetyProposal(code, 'manual', updatedCatalog, 'Nová vlastní kategorie. Použijte návrh a uložte produkt.'), manuallySelected: true };
+  } catch (error) {
+    const duplicate = error instanceof Error && 'code' in error && error.code === 'P2002';
+    return { ok: false as const, error: duplicate ? 'Kategorie s tímto názvem již existuje.' : error instanceof Error ? error.message : 'Kategorii se nepodařilo vytvořit.' };
+  }
 }
