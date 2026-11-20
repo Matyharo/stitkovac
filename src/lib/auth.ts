@@ -1,9 +1,10 @@
+import { sessionCookieName } from '@/lib/session';
 import { cookies } from 'next/headers';
 import { prisma } from './db';
 import { verifySession } from './session';
 
 export async function getAuthenticatedUser() {
-  const token = (await cookies()).get('auth_session')?.value;
+  const token = (await cookies()).get(sessionCookieName())?.value;
   const session = verifySession(token);
   if (!session?.sessionId) return null;
   const record = await prisma.userSession.findUnique({ where: { id: session.sessionId }, include: { user: true } });

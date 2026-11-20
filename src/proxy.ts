@@ -1,3 +1,4 @@
+import { sessionCookieName } from '@/lib/session';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { verifySession } from './lib/session';
@@ -5,7 +6,7 @@ import { verifySession } from './lib/session';
 export function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname;
 
-  const isAuthenticated = Boolean(verifySession(req.cookies.get('auth_session')?.value)?.sessionId);
+  const isAuthenticated = Boolean(verifySession(req.cookies.get(sessionCookieName())?.value)?.sessionId);
   if (path === '/api/cron/sync-feed' || path === '/api/health') return NextResponse.next();
 
   // Login remains reachable for expired or revoked database sessions.

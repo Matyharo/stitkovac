@@ -37,3 +37,9 @@ export function secureSessionCookie(): boolean {
   // Explicit opt-out only for a trusted local HTTP network.
   return process.env.SESSION_COOKIE_SECURE !== 'false';
 }
+
+export function sessionCookieName(): string {
+  const name = process.env.SESSION_COOKIE_NAME || 'auth_session';
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) throw new Error('Neplatný název přihlašovací cookie.');
+  return name;
+}

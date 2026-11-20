@@ -48,3 +48,20 @@ Obnovu provádějte se zastavenou aplikací. Nejprve zazálohujte aktuální dat
 ## Další samostatná práce
 
 Zůstává postupné rozdělení zbývajících velkých komponent, které je vhodné provádět odděleně od bezpečnostních změn. Sdílený dialog nyní řeší Escape, Tab a vracení fokusu. Přímý editor kategorií a obnova hromadných změn jsou v Nastavení. Režim Ruční posouzení vyřadí kategorii z hromadného přiřazování; nemaže již přiřazené texty. PDF generátor sám odmítá oříznutí bezpečnostního a kontaktního textu. Zkracování názvu chrání čísla, ale sémantiku variant musí nadále potvrdit člověk. Konečné ověření těchto změn vyžaduje také uživatelský průchod nové verze a kontrolu fyzického výtisku.
+
+
+## Samostatný náhled na Windows
+
+Skript `scripts/preview-windows.ps1` vytvoří nový checkout větve fix/technical-audit ve vedlejším adresáři s příponou -audit. Z konfigurace původního projektu zjistí cestu SQLite (lze zadat explicitně pomocí -SourceDatabase), zkontroluje integritu a přes VACUUM INTO vytvoří samostatnou databázi preview.db. Existující cílový adresář ani databázi nepřepisuje. Migraci, build i spuštění provede pouze nad touto kopií. Vyžaduje Git a Node.js 22+.
+
+Příklad při spuštění skriptu z již stažené nové verze:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/preview-windows.ps1 -ProjectPath "C:\Users\ferst\Desktop\Stitkovac"
+```
+
+Testovací aplikace poslouchá jen na 127.0.0.1:3001. Původní port 3000 zůstává beze změny. Přihlašovací účty jsou z kopie dat, ale cookie má vlastní název a nový podpisový klíč, takže přihlášení ani odhlášení náhledu nemění přihlášení původní aplikace. Vzdálené zálohovací umístění se do náhledu nepřebírá. Ctrl+C zastaví pouze proces náhledu.
+
+Před schválením nasazení ověřte v náhledu přihlášení, počty výrobků a šablon, editaci produktu, návrh bezpečnostního textu, historii a náhled PDF, práci s kategoriemi a návrat hromadných změn. Skript byl integračně ověřen na úrovni databázové kopie a migrací; samotný PowerShell je nutné spustit a ověřit na Windows.
+
+Serverové akce jsou nyní rozdělené podle domén v src/app/actions/. Původní importy z src/app/actions.ts zůstávají kompatibilní. Samotné doménové moduly nesou direktivu use server, společný exportní soubor nikoli. To zachovává serverovou hranici i v produkčním Turbopack buildu.
