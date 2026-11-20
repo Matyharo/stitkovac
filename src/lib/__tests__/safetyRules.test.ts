@@ -46,7 +46,7 @@ describe('deterministic safety selection', () => {
   });
   it('persists only a confirmed code with its exact workbook text', async () => {
     const upsert = vi.fn();
-    const tx = { customSafetyCategory: { findMany: vi.fn().mockResolvedValue([]) }, productSafetySelection: { findUnique: vi.fn().mockResolvedValue(null), upsert } } as unknown as Prisma.TransactionClient;
+    const tx = { safetyCatalogState: { findUnique: vi.fn().mockResolvedValue(null) }, customSafetyCategory: { findMany: vi.fn().mockResolvedValue([]) }, productSafetySelection: { findUnique: vi.fn().mockResolvedValue(null), upsert } } as unknown as Prisma.TransactionClient;
     const product = { id: 'test', name: 'Natáčky', safetyText: catalog.byCode.get('LASH_NAT')!.safetyText };
     await storeSafetySelection(tx, product, 'LASH_NAT');
     expect(upsert).toHaveBeenCalledOnce();
@@ -54,7 +54,7 @@ describe('deterministic safety selection', () => {
   });
   it('removes stale confirmation without changing product text', async () => {
     const remove = vi.fn();
-    const tx = { customSafetyCategory: { findMany: vi.fn().mockResolvedValue([]) }, productSafetySelection: { findUnique: vi.fn().mockResolvedValue({ code: 'LASH_NAT', name: 'Původní název', description: '', safetyText: 'Text' }), delete: remove } } as unknown as Prisma.TransactionClient;
+    const tx = { safetyCatalogState: { findUnique: vi.fn().mockResolvedValue(null) }, customSafetyCategory: { findMany: vi.fn().mockResolvedValue([]) }, productSafetySelection: { findUnique: vi.fn().mockResolvedValue({ code: 'LASH_NAT', name: 'Původní název', description: '', safetyText: 'Text' }), delete: remove } } as unknown as Prisma.TransactionClient;
     await storeSafetySelection(tx, { id: 'test', name: 'Nový název', safetyText: 'Text' });
     expect(remove).toHaveBeenCalledWith({ where: { productId: 'test' } });
   });

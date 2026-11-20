@@ -40,6 +40,8 @@ beforeEach(async () => {
   vi.mocked(writeFile).mockReset().mockResolvedValue();
   await prisma.product.deleteMany();
   await prisma.customSafetyCategory.deleteMany();
+  await prisma.safetyCatalogState.deleteMany();
+  await prisma.safetyCatalogImport.deleteMany();
   await prisma.product.createMany({ data: [{ id: 'known', sku: 'known', name: 'Natáčky na řasy', safetyText: 'Původní' }, { id: 'unknown', sku: 'unknown', name: 'Neznámý výrobek', safetyText: 'Výchozí' }] });
 });
 describe('bulk safety server actions', () => {
@@ -129,5 +131,51 @@ describe('custom safety categories', () => {
     expect((await prisma.product.findUniqueOrThrow({ where: { id: 'unknown' } })).safetyText).toBe('Výchozí');
     const suggested = await suggestProductSafetyTextAction({ name: 'Zola zrcátko s pouzdrem' });
     expect(suggested.ok && suggested.code).toBe('NEURCENO');
+  });
+});
+
+describe('category workbook API', () => {
+  async function request(mode: string, bytes: Uint8Array, token?: string) {
+    const { POST } = await import('@/app/api/safety-categories/route');
+    const form = new FormData();
+    form.set('file', new File([new Uint8Array(bytes)], 'categories.xlsx'));
+    form.set('mode', mode);
+    if (token) form.set('token', token);
+    return POST(new Request('http://localhost/api/safety-categories', { method: 'POST', body: form }));
+  }
+  it('exports custom categories, previews without writes, imports atomically and preserves product texts', async () => {
+    const created = await createSafetyCategoryAction({ name: 'Zrcátka', safetyText: 'Původní vlastní text zrcátek.', keywords: 'zrcátko' });
+    if (!created.ok) throw new Error(created.error);
+    const { GET } = await import('@/app/api/safety-categories/route');
+    const response = await GET(); expect(response.status).toBe(200);
+    const XLSX = await import('xlsx');
+    const workbook = XLSX.read(await response.arrayBuffer(), { type: 'array' });
+    const rows = XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets['Šablony']);
+    const row = rows.findIndex(r => r['Kód pro AI'] === created.code) + 2;
+    expect(row).toBeGreaterThan(1);
+    workbook.Sheets['Šablony'][`D${row}`].v = 'Nový text zrcátek podle výrobce.';
+    const bytes = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    const previewResponse = await request('preview', bytes);
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json(); expect(preview.updated).toBe(1);
+    expect(await prisma.safetyCatalogState.count()).toBe(0);
+    expect((await request('apply', bytes, preview.token)).status).toBe(200);
+    expect(await prisma.safetyCatalogImport.count()).toBe(1);
+    const { loadApplicationSafetyCatalog } = await import('../customSafetyCatalog');
+    expect((await loadApplicationSafetyCatalog()).byCode.get(created.code)?.safetyText).toBe('Nový text zrcátek podle výrobce.');
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: 'unknown' } })).safetyText).toBe('Výchozí');
+    expect((await GET()).status).toBe(200);
+  });
+  it('rejects stale imports and unauthorized export/import without writing', async () => {
+    const { GET } = await import('@/app/api/safety-categories/route');
+    const bytes = new Uint8Array(await (await GET()).arrayBuffer());
+    const preview = await (await request('preview', bytes)).json();
+    await createSafetyCategoryAction({ name: 'Nová kategorie', safetyText: 'Text podle výrobce.' });
+    expect((await request('apply', bytes, preview.token)).status).toBe(400);
+    expect(await prisma.safetyCatalogState.count()).toBe(0);
+    expect(await prisma.safetyCatalogImport.count()).toBe(0);
+    vi.mocked(assertAuthenticated).mockRejectedValue(new Error('Unauthorized'));
+    expect((await GET()).status).toBe(403);
+    expect((await request('apply', bytes, preview.token)).status).toBe(403);
   });
 });

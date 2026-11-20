@@ -1,5 +1,6 @@
 'use client';
 
+import SafetyCategoryTransfer from './SafetyCategoryTransfer';
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -463,6 +464,8 @@ export default function SettingsPage() {
           Konfigurujte pravidla pro kontaktní údaje u produktů, napojení na Shoptet API a provádějte údržbu databáze.
         </p>
       </div>
+
+      <SafetyCategoryTransfer />
 
       {/* Notifications */}
       {success && (

@@ -143,3 +143,15 @@ model CustomSafetyCategory {
   createdBy  String
   createdAt  DateTime @default(now())
 }
+
+model SafetyCatalogState {
+  id      String @id
+  content String
+}
+
+model SafetyCatalogImport {
+  id        String   @id @default(uuid())
+  previous  String
+  createdBy String
+  createdAt DateTime @default(now())
+}

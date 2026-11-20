@@ -3,7 +3,7 @@ import { prisma } from './db';
 import { loadSafetyTemplates, type SafetyTemplatesCatalog } from './safetyTemplates';
 import { normalizeRuleText } from './safetyRules';
 
-type CatalogDb = Pick<Prisma.TransactionClient, 'customSafetyCategory'>;
+type CatalogDb = Pick<Prisma.TransactionClient, 'customSafetyCategory' | 'safetyCatalogState'>;
 export function validateCustomCategory(input: { name: string; area?: string; safetyText: string; keywords?: string }) {
   const name = input.name?.trim() || '';
   const area = input.area?.trim() || 'Ostatní';
@@ -18,8 +18,10 @@ export function validateCustomCategory(input: { name: string; area?: string; saf
 }
 
 export async function loadApplicationSafetyCatalog(db: CatalogDb = prisma): Promise<SafetyTemplatesCatalog> {
-  const base = loadSafetyTemplates();
-  const custom = await db.customSafetyCategory.findMany({ orderBy: { code: 'asc' } });
+  const stored = await db.safetyCatalogState.findUnique({ where: { id: 'main' } });
+  const saved = stored ? JSON.parse(stored.content) as Omit<SafetyTemplatesCatalog, 'byCode'> : null;
+  const base = saved ? { ...saved, byCode: new Map(saved.templates.map(entry => [entry.code, entry])) } : loadSafetyTemplates();
+  const custom = (await db.customSafetyCategory.findMany({ orderBy: { code: 'asc' } })).filter(category => !base.byCode.has(category.code));
   const entries = custom.map(category => ({ code: category.code, area: category.area, productType: category.name, safetyText: category.safetyText,
     mode: 'Návrh ke schválení' as const, clues: (JSON.parse(category.keywords) as string[]).join(', '),
     checkNote: 'Kategorie vytvořená uživatelem v aplikaci. Před použitím ověřte vhodnost pro konkrétní výrobek.',
