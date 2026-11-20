@@ -65,3 +65,12 @@ Testovací aplikace poslouchá jen na 127.0.0.1:3001. Původní port 3000 zůst�
 Před schválením nasazení ověřte v náhledu přihlášení, počty výrobků a šablon, editaci produktu, návrh bezpečnostního textu, historii a náhled PDF, práci s kategoriemi a návrat hromadných změn. Skript byl integračně ověřen na úrovni databázové kopie a migrací; samotný PowerShell je nutné spustit a ověřit na Windows.
 
 Serverové akce jsou nyní rozdělené podle domén v src/app/actions/. Původní importy z src/app/actions.ts zůstávají kompatibilní. Samotné doménové moduly nesou direktivu use server, společný exportní soubor nikoli. To zachovává serverovou hranici i v produkčním Turbopack buildu.
+
+
+## Nasazení samostatné serverové verze
+
+`scripts/deploy-server.sh` je určen pro dosavadní systemd službu stitkovac na Dellu (uživatel maty, Node v /usr/bin/node, port 3000). Výchozím zdrojem konfigurace je /home/maty/stitkovac. Nejprve připraví nový checkout ve vedlejším adresáři -releases, ověří absolutní cestu existující DB, nainstaluje závislosti, zkontroluje relace a provede build. Původní checkout nepřepisuje.
+
+Teprve poté zastaví službu, vytvoří konzistentní zálohu, migruje DB a přepne pracovní adresář služby pomocí vlastního systemd drop-in souboru. Úspěch vyžaduje aktivní službu a zdravý /api/health. Při chybě po zastavení obnoví původní službu a, pokud byla záloha dokončena, také databázi. Chybnou databázi přesune stranou. Předchozí drop-in se uchovává v adresáři nové verze.
+
+Skript vyžaduje sudo a musí se spouštět jako vlastník databáze. Samotný skript neřeší příčinu vypínání Dellu, HTTPS nebo monitoring mimo server. Starý adresář ponechte kvůli návratu, protože databáze v něm nadále zůstává. Další vývojové změny je nutné nasazovat jako nové releasy, nikoli upravovat původní starý checkout.

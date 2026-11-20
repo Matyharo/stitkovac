@@ -292,11 +292,21 @@ function PrintPageContent() {
     loadData();
   }, []);
 
+  // Výchozí počet = celý arch (dle zvolené šablony, fallback 21)
+  const getLabelsPerPage = () => {
+    const tpl = templates.find((t) => t.id === selectedTemplateId);
+    if (!tpl) return 21;
+    const lay = JSON.parse(tpl.layoutConfig);
+    const c = Math.max(1, Math.floor((210 - (lay.leftMargin || 7.25) + (lay.horizontalGap || 2.5)) / ((lay.labelWidth || 63.5) + (lay.horizontalGap || 2.5))));
+    const r = Math.max(1, Math.floor((297 - (lay.topMargin || 15.15) + (lay.verticalGap || 0)) / ((lay.labelHeight || 38.1) + (lay.verticalGap || 0))));
+    return c * r;
+  };
+
   // Load print job if loadJob param is present in URL, or pre-select product if productId/sku is present
   useEffect(() => {
     const productIdParam = searchParams.get('productId');
     const skuParam = searchParams.get('sku');
-    if ((productIdParam || skuParam) && allProducts.length > 0) {
+    if ((productIdParam || skuParam) && allProducts.length > 0 && selectedTemplateId && templates.length > 0) {
       const targetProd = allProducts.find(
         (p) => (productIdParam && p.id === productIdParam) || (skuParam && p.sku === skuParam)
       );
@@ -306,7 +316,7 @@ function PrintPageContent() {
           if (existing) {
             return prev;
           }
-          return [...prev, { ...targetProd, quantity: 1 }];
+          return [...prev, { ...targetProd, quantity: getLabelsPerPage() }];
         });
         setSuccess(`Produkt "${targetProd.name}" byl přidán k tisku.`);
       } else {
@@ -387,7 +397,7 @@ function PrintPageContent() {
     };
 
     loadJobFromHistory();
-  }, [searchParams, templates, allProducts]);
+  }, [searchParams, templates, allProducts, selectedTemplateId]);
 
   // Filter products for search autocomplete
   useEffect(() => {
@@ -422,16 +432,6 @@ function PrintPageContent() {
       // ignore
     }
   }, [selectedTemplateId, templates, startPosition]);
-
-  // Výchozí počet = celý arch (dle zvolené šablony, fallback 21)
-  const getLabelsPerPage = () => {
-    const tpl = templates.find((t) => t.id === selectedTemplateId);
-    if (!tpl) return 21;
-    const lay = JSON.parse(tpl.layoutConfig);
-    const c = Math.max(1, Math.floor((210 - (lay.leftMargin || 7.25) + (lay.horizontalGap || 2.5)) / ((lay.labelWidth || 63.5) + (lay.horizontalGap || 2.5))));
-    const r = Math.max(1, Math.floor((297 - (lay.topMargin || 15.15) + (lay.verticalGap || 0)) / ((lay.labelHeight || 38.1) + (lay.verticalGap || 0))));
-    return c * r;
-  };
 
   // Sync printList dummy item for sixIconsLayout templates
   useEffect(() => {
