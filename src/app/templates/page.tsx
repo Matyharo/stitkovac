@@ -182,6 +182,7 @@ export default function TemplatesPage() {
     columns: 3,
     rows: 7,
     dualLayout: false,
+    dualLayoutDirection: '',
     labelRotation: 0,
     customIcons: [] as any[],
     sixIconsLayout: false,
@@ -265,6 +266,7 @@ export default function TemplatesPage() {
       columns: 3,
       rows: 7,
       dualLayout: false,
+      dualLayoutDirection: '',
       labelRotation: 0,
       sixIconsLayout: false,
       ...parsedLayout,
@@ -324,6 +326,7 @@ export default function TemplatesPage() {
       columns: 3,
       rows: 7,
       dualLayout: false,
+      dualLayoutDirection: '',
       labelRotation: 0,
       customIcons: [],
       sixIconsLayout: false,
@@ -844,6 +847,16 @@ export default function TemplatesPage() {
                     <span className="text-xs font-semibold text-slate-700">Duplikovat obsah (2×)</span>
                   </label>
                 </div>
+                {layout.dualLayout && <div>
+                  <label htmlFor="dual-layout-direction" className="block text-xs font-semibold text-slate-700 mb-1">Rozdělení dvojité šablony</label>
+                  <select id="dual-layout-direction" value={layout.dualLayoutDirection || (layout.labelRotation === 90 ? 'stacked' : 'side-by-side')}
+                    onChange={e => setLayout({ ...layout, dualLayoutDirection: e.target.value })}
+                    className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs bg-white">
+                    <option value="side-by-side">Vedle sebe - levá a pravá polovina</option>
+                    <option value="stacked">Nad sebou - horní a dolní polovina</option>
+                  </select>
+                  <p className="text-[11px] text-slate-500 mt-1">V každé polovině se opakuje celý obsah etikety.</p>
+                </div>}
                 <div>
                   <label className="flex items-center gap-2.5 cursor-pointer">
                     <input
