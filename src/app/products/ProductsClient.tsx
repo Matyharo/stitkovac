@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useTransition } from 'react';
 import Link from 'next/link';
+import BulkSafety from './BulkSafety';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
   getProducts,
@@ -54,7 +55,7 @@ interface ActiveAiProposal {
   result: AiSuggestionResult;
 }
 
-export default function ProductsPage() {
+export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?: boolean }) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -894,6 +895,8 @@ export default function ProductsPage() {
           </button>
         </div>
       </div>
+
+      {canBulkSafety && <BulkSafety onApplied={() => { loadProducts(debouncedSearch); }} />}
 
       {/* Notifications */}
       {successMessage && (

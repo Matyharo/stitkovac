@@ -1,10 +1,12 @@
 import { Suspense } from 'react';
+import { getAuthenticatedUser } from '@/lib/auth';
 import ProductsClient from './ProductsClient';
 import { RefreshCw } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
-export default function ProductsPage() {
+export default async function ProductsPage() {
+  const user = await getAuthenticatedUser();
   return (
     <Suspense
       fallback={
@@ -14,7 +16,7 @@ export default function ProductsPage() {
         </div>
       }
     >
-      <ProductsClient />
+      <ProductsClient canBulkSafety={user?.role === 'admin'} />
     </Suspense>
   );
 }

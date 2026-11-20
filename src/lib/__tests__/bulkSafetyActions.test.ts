@@ -1,0 +1,87 @@
+import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from 'vitest';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { prisma } from '../db';
+import { assertAuthenticated } from '../auth';
+import { writeFile } from 'node:fs/promises';
+import { previewBulkSafetyAction, applyBulkSafetyAction } from '@/app/actions';
+
+const fixture = await vi.hoisted(async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'stitkovac-bulk-'));
+  return { directory, database: path.join(directory, 'test.db') };
+});
+
+vi.mock('../db', async () => {
+  const { PrismaClient } = await import('@prisma/client');
+  return { prisma: new PrismaClient({ datasourceUrl: `file:${fixture.database}` }) };
+});
+vi.mock('../auth', () => ({ getAuthenticatedUser: vi.fn(async () => ({ username: 'test', role: 'admin' })), assertAuthenticated: vi.fn(async () => ({ username: 'test', role: 'admin' })) }));
+vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+vi.mock('next/headers', () => ({ cookies: vi.fn(async () => ({ get: vi.fn() })) }));
+vi.mock('node:fs/promises', async importOriginal => ({ ...await importOriginal<typeof import('node:fs/promises')>(), mkdir: vi.fn(), writeFile: vi.fn(async () => {}) }));
+
+// This client has an isolated temporary SQLite database; never touches the application DB.
+const directory = fixture.directory;
+beforeAll(async () => {
+  const database = join(directory, 'test.db');
+  writeFileSync(database, '');
+  const schema = readFileSync('prisma/schema.prisma', 'utf8').replace(/url\s*=\s*[^\n]+/, `url = "file:${database}"`);
+  const schemaPath = join(directory, 'schema.prisma');
+  writeFileSync(schemaPath, schema);
+  execFileSync('node_modules/.bin/prisma', ['db', 'push', '--schema', schemaPath, '--skip-generate'], { stdio: 'ignore' });
+});
+afterAll(async () => { await prisma.$disconnect(); rmSync(directory, { recursive: true, force: true }); });
+beforeEach(async () => {
+  vi.mocked(assertAuthenticated).mockResolvedValue({ username: 'test', role: 'admin', name: 'Test' });
+  vi.mocked(writeFile).mockReset().mockResolvedValue();
+  await prisma.product.deleteMany();
+  await prisma.product.createMany({ data: [{ id: 'known', sku: 'known', name: 'Natáčky na řasy', safetyText: 'Původní' }, { id: 'unknown', sku: 'unknown', name: 'Neznámý výrobek', safetyText: 'Výchozí' }] });
+});
+describe('bulk safety server actions', () => {
+  it('previews without writes, then atomically applies and backs up previous text', async () => {
+    const preview = await previewBulkSafetyAction();
+    expect(preview.changed).toBe(1);
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: 'known' } })).safetyText).toBe('Původní');
+    const result = await applyBulkSafetyAction(preview.token);
+    expect(result.changed).toBe(1);
+    expect(writeFile).toHaveBeenCalledOnce();
+    const backup = JSON.parse(vi.mocked(writeFile).mock.calls[0][1] as string);
+    expect(backup.changes[0]).toMatchObject({ id: 'known', before: 'Původní' });
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: 'unknown' } })).safetyText).toBe('Výchozí');
+    expect((await previewBulkSafetyAction()).changed).toBe(0);
+  });
+  it('rejects stale preview without overwriting concurrent user edits', async () => {
+    const preview = await previewBulkSafetyAction();
+    await prisma.product.update({ where: { id: 'known' }, data: { safetyText: 'Ruční úprava' } });
+    await expect(applyBulkSafetyAction(preview.token)).rejects.toThrow('změnily');
+    expect(writeFile).not.toHaveBeenCalled();
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: 'known' } })).safetyText).toBe('Ruční úprava');
+  });
+  it('does not update any text when backup creation fails', async () => {
+    const preview = await previewBulkSafetyAction();
+    vi.mocked(writeFile).mockRejectedValueOnce(new Error('Disk full'));
+    await expect(applyBulkSafetyAction(preview.token)).rejects.toThrow('Disk full');
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: 'known' } })).safetyText).toBe('Původní');
+  });
+  it('rolls back the entire batch if a later database write fails', async () => {
+    await prisma.product.create({ data: { id: 'z-failing', sku: 'z-failing', name: 'Natáčky na řasy', safetyText: 'Další původní' } });
+    const preview = await previewBulkSafetyAction();
+    await prisma.$executeRawUnsafe("CREATE TRIGGER fail_bulk BEFORE UPDATE ON Product WHEN OLD.id = 'z-failing' BEGIN SELECT RAISE(ABORT, 'forced test failure'); END");
+    try {
+      await expect(applyBulkSafetyAction(preview.token)).rejects.toThrow();
+      expect((await prisma.product.findUniqueOrThrow({ where: { id: 'known' } })).safetyText).toBe('Původní');
+      expect((await prisma.product.findUniqueOrThrow({ where: { id: 'z-failing' } })).safetyText).toBe('Další původní');
+    } finally { await prisma.$executeRawUnsafe('DROP TRIGGER fail_bulk'); }
+  });
+  it('requires administrator authentication for preview and apply', async () => {
+    vi.mocked(assertAuthenticated).mockRejectedValue(new Error('Unauthorized'));
+    await expect(previewBulkSafetyAction()).rejects.toThrow('Unauthorized');
+    await expect(applyBulkSafetyAction('token')).rejects.toThrow('Unauthorized');
+    expect(assertAuthenticated).toHaveBeenCalledWith(true);
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+});

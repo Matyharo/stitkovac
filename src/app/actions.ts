@@ -1686,3 +1686,43 @@ export async function updateProductShortNameAction(productId: string, shortName:
 
 
 
+
+export async function previewBulkSafetyAction() {
+  await assertAuthenticated(true);
+  const { planBulkSafety } = await import('@/lib/bulkSafety');
+  const products = await prisma.product.findMany({ include: { safetySelection: true }, orderBy: { id: 'asc' } });
+  const plan = planBulkSafety(products, loadSafetyTemplates());
+  return { token: plan.token, total: plan.total, changed: plan.changes.length, unknown: plan.unknown, review: plan.review, unchanged: plan.unchanged,
+    sample: plan.changes.slice(0, 20).map(({ sku, name, code, before, after }) => ({ sku, name, code, before, after })) };
+}
+
+export async function applyBulkSafetyAction(token: string) {
+  await assertAuthenticated(true);
+  const { planBulkSafety } = await import('@/lib/bulkSafety');
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const path = await import('node:path');
+  const result = await prisma.$transaction(async tx => {
+    const products = await tx.product.findMany({ include: { safetySelection: true }, orderBy: { id: 'asc' } });
+    const plan = planBulkSafety(products, loadSafetyTemplates());
+    if (!token || token !== plan.token) throw new Error('Produkty nebo pravidla se od náhledu změnily. Načtěte nový náhled.');
+    if (!plan.changes.length) return { changed: 0, backup: null };
+    const directory = path.join(process.cwd(), 'prisma', 'safety-backups');
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const filename = `safety-${Date.now()}-${crypto.randomUUID()}.json`;
+    await writeFile(path.join(directory, filename), JSON.stringify({ createdAt: new Date().toISOString(), changes: plan.changes }, null, 2), { mode: 0o600, flag: 'wx' });
+    for (const change of plan.changes) {
+      await tx.product.update({ where: { id: change.id }, data: { safetyText: change.after } });
+      // Rule matches are proposals, not individually confirmed categories.
+      if (change.source === 'saved') {
+        await tx.productSafetySelection.update({ where: { productId: change.id }, data: { safetyText: change.after } });
+      } else {
+        await tx.productSafetySelection.deleteMany({ where: { productId: change.id } });
+      }
+    }
+    return { changed: plan.changes.length, backup: filename };
+  }, { timeout: 120000 });
+  await logActivity('BULK_SAFETY_UPDATE', `Aktualizováno ${result.changed} textů; záloha: ${result.backup || 'beze změn'}`);
+  revalidatePath('/products');
+  revalidatePath('/print');
+  return result;
+}
