@@ -1,8 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createSession, verifySession, secureSessionCookie, SESSION_MAX_AGE } from '../session';
+import { createSession, verifySession, secureSessionCookie, SESSION_MAX_AGE, sessionCookieName } from '../session';
 
 afterEach(() => vi.unstubAllEnvs());
 describe('signed login session', () => {
+  it('isolates preview cookies without changing the production default', () => {
+    vi.stubEnv('SESSION_COOKIE_NAME', '');
+    expect(sessionCookieName()).toBe('auth_session');
+    vi.stubEnv('SESSION_COOKIE_NAME', 'stitkovac_preview_3001');
+    expect(sessionCookieName()).toBe('stitkovac_preview_3001');
+    vi.stubEnv('SESSION_COOKIE_NAME', 'invalid;name');
+    expect(() => sessionCookieName()).toThrow();
+  });
   it('accepts a valid token and rejects legacy, modified and expired cookies', () => {
     vi.stubEnv('SESSION_SECRET', 'a'.repeat(64));
     const token = createSession('maty', 1000);

@@ -1,3 +1,4 @@
+import { fetchFeedBytes } from '../feedFetch';
 import * as XLSX from 'xlsx';
 import { stripHtmlToPlainText } from '../safetyClassifier';
 
@@ -89,7 +90,7 @@ export async function parseShoptetFeedFromBuffer(buffer: ArrayBuffer | Buffer): 
       if (rawPrice !== undefined && rawPrice !== null && rawPrice !== '') {
         const cleanPriceStr = String(rawPrice).replace(/\s+/g, '').replace(',', '.');
         const parsedPrice = parseFloat(cleanPriceStr);
-        if (!isNaN(parsedPrice)) {
+        if (Number.isFinite(parsedPrice) && parsedPrice >= 0) {
           price = Math.round(parsedPrice * 100) / 100;
         }
       }
@@ -172,7 +173,7 @@ function parseShoptetXml(xml: string): FeedProductItem[] {
     let price: number | undefined = undefined;
     if (rawPrice) {
       const num = parseFloat(rawPrice.replace(/\s+/g, '').replace(',', '.'));
-      if (!isNaN(num)) price = Math.round(num * 100) / 100;
+      if (Number.isFinite(num) && num >= 0) price = Math.round(num * 100) / 100;
     }
 
     const ean = extractTag(itemBlock, 'EAN') || undefined;
@@ -203,26 +204,8 @@ export async function fetchAndParseShoptetFeed(feedUrl: string): Promise<ParseFe
     // ze kterého stripHtmlToPlainText bezpečně odstraní celé <script> a <style> bloky.
     const effectiveUrl = feedUrl.replace(/([?&])stripTags=1(&|$)/i, '$1').replace(/[?&]$/, '');
 
-    const response = await fetch(effectiveUrl, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Stitkovac-Sync/1.0',
-        'Accept': '*/*',
-      },
-      // Cache vypneme pro aktuální data
-      cache: 'no-store',
-    });
-
-    if (!response.ok) {
-      return {
-        success: false,
-        products: [],
-        error: `HTTP chyba při stahování feedu: ${response.status} ${response.statusText}`,
-      };
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    return await parseShoptetFeedFromBuffer(arrayBuffer);
+    const bytes = await fetchFeedBytes(effectiveUrl);
+    return await parseShoptetFeedFromBuffer(bytes);
   } catch (err: unknown) {
     return {
       success: false,

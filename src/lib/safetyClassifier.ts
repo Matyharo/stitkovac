@@ -1,3 +1,4 @@
+import { bufferedOllamaFetch } from './ollamaRequest';
 import {
   loadSafetyTemplates,
   getSafetyTemplateByCode,
@@ -307,6 +308,7 @@ async function classifyProductSafetyPass(
     };
   }
 
+  if (catalog.templates.length > 120) return { ok: false, errorType: 'validation', error: 'Katalog je pro lokální AI příliš velký. Vyberte kategorii ručně.', categories };
   const validCodes = catalog.templates.map((t) => t.code);
 
   const requestBody = {
@@ -346,7 +348,7 @@ async function classifyProductSafetyPass(
 
   let response: Response;
   try {
-    response = await fetchFn(`${baseUrl}/api/chat`, {
+    response = await bufferedOllamaFetch(fetchFn, `${baseUrl}/api/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -525,6 +527,8 @@ export async function shortenProductNameForLabel(
     think: false,
     options: {
       temperature: 0.1,
+      num_predict: 100,
+      num_ctx: 2048,
     },
     format: {
       type: 'object',
@@ -547,7 +551,7 @@ export async function shortenProductNameForLabel(
 
   let response: Response;
   try {
-    response = await fetchFn(`${baseUrl}/api/chat`, {
+    response = await bufferedOllamaFetch(fetchFn, `${baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
@@ -635,6 +639,8 @@ export async function shortenProductNameForLabel(
       };
     }
 
+    const numbers = (text: string): string[] => text.match(/\d+(?:[.,]\d+)?/g) || [];
+    if (shortName.length >= cleanName.length || shortName.length > targetMaxChars || numbers(cleanName).some(n => !numbers(shortName).includes(n))) return { ok: false, errorType: 'invalid_response', error: 'AI změnila nebo vynechala číselné údaje či název nezkrátila. Upravte jej ručně.' };
     return {
       ok: true,
       shortName,

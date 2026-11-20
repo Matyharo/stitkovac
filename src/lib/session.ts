@@ -10,13 +10,13 @@ function secret(): string {
   return value;
 }
 
-export function createSession(username: string, now = Date.now()): string {
-  const payload = Buffer.from(JSON.stringify({ username, expires: now + SESSION_MAX_AGE * 1000 })).toString('base64url');
+export function createSession(username: string, now = Date.now(), sessionId?: string): string {
+  const payload = Buffer.from(JSON.stringify({ username, expires: now + SESSION_MAX_AGE * 1000, ...(sessionId ? { sessionId } : {}) })).toString('base64url');
   const signature = createHmac('sha256', secret()).update(payload).digest('base64url');
   return `${payload}.${signature}`;
 }
 
-export function verifySession(token: string | undefined, now = Date.now()): { username: string } | null {
+export function verifySession(token: string | undefined, now = Date.now()): { username: string; sessionId?: string } | null {
   if (!token) return null;
   try {
     const parts = token.split('.');
@@ -27,7 +27,7 @@ export function verifySession(token: string | undefined, now = Date.now()): { us
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
     const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
     if (typeof data.username !== 'string' || !data.username.trim() || typeof data.expires !== 'number' || data.expires <= now) return null;
-    return { username: data.username };
+    return { username: data.username, ...(typeof data.sessionId === 'string' ? { sessionId: data.sessionId } : {}) };
   } catch {
     return null;
   }
@@ -36,4 +36,10 @@ export function verifySession(token: string | undefined, now = Date.now()): { us
 export function secureSessionCookie(): boolean {
   // Explicit opt-out only for a trusted local HTTP network.
   return process.env.SESSION_COOKIE_SECURE !== 'false';
+}
+
+export function sessionCookieName(): string {
+  const name = process.env.SESSION_COOKIE_NAME || 'auth_session';
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) throw new Error('Neplatný název přihlašovací cookie.');
+  return name;
 }

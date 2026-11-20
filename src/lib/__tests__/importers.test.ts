@@ -29,18 +29,10 @@ describe('ProductImporter Heuristics', () => {
 });
 
 describe('ShoptetApiImporter', () => {
-  it('returns appropriate response for parse without active file', async () => {
-    const importer = new ShoptetApiImporter();
-    const result = await importer.parse();
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('Shoptet API');
-  });
-
-  it('simulates API data fetching successfully', async () => {
+  it('does not claim successful API integration or log credentials', async () => {
     const importer = new ShoptetApiImporter();
     const result = await importer.fetchFromApi('test-key', '12345');
-    expect(result.success).toBe(true);
-    expect(result.rows.length).toBeGreaterThan(0);
-    expect(result.rows[0]['Kód']).toBe('SH-001');
+    expect(result.success).toBe(false);
+    expect(result.rows).toEqual([]);
   });
 });

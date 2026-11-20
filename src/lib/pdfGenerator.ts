@@ -1018,6 +1018,7 @@ export async function generateLabelsPdf(
   startPosition: number,
   fontOverrides?: FontOverrides
 ): Promise<Uint8Array> {
+  if (!Number.isInteger(startPosition) || startPosition < 1 || !items.length || items.some(item => !Number.isInteger(item.quantity) || item.quantity < 1) || items.reduce((sum, item) => sum + item.quantity, 0) > 10000) throw new Error('Neplatný počet štítků (max. 10000).');
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit(fontkit);
 
@@ -1032,6 +1033,11 @@ export async function generateLabelsPdf(
   const { regular: regularFontBytes, bold: boldFontBytes } = await loadRobotoFontBytes();
   const regularFont = await pdfDoc.embedFont(regularFontBytes);
   const boldFont    = await pdfDoc.embedFont(boldFontBytes);
+  for (const item of items) {
+    const overflow = measureSingleLabelOverflow(item, template, regularFont, boldFont, fontOverrides);
+    if (overflow.safetyTextClipped || overflow.clippedFields.includes('Kontaktní údaje')) throw new Error(`Štítek ${item.sku}: bezpečnostní nebo kontaktní text se nevejde. Upravte šablonu či velikost písma.`);
+  }
+
 
   // Pre-embed custom icons
   const layout     = JSON.parse(template.layoutConfig);

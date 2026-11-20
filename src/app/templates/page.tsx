@@ -1,4 +1,5 @@
 'use client';
+import AccessibleModal from '@/components/AccessibleModal';
 
 import React, { useState, useEffect } from 'react';
 import { getTemplates, saveTemplate, deleteTemplate, duplicateTemplate, updateTemplateOrder, setDefaultTemplate, getContactRules } from '@/app/actions';
@@ -1187,7 +1188,7 @@ export default function TemplatesPage() {
 
       {/* DELETE CONFIRM MODAL */}
       {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+        <AccessibleModal onClose={() => setShowDeleteConfirm(null)} className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl p-6 border border-slate-100 animate-in zoom-in-95 duration-200">
             <div className="flex items-center gap-3 text-rose-600 mb-4">
               <Trash2 className="w-6 h-6 shrink-0" />
@@ -1212,7 +1213,7 @@ export default function TemplatesPage() {
               </button>
             </div>
           </div>
-        </div>
+        </AccessibleModal>
       )}
     </div>
   );

@@ -53,3 +53,5 @@ next-env.d.ts
 
 # Private backups of product safety texts
 /prisma/safety-backups/
+
+/prisma/database-backups/

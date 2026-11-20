@@ -5,6 +5,7 @@ export class XlsxImporter implements ProductImporter {
   name = 'XLSX Importer';
 
   async parse(file: File): Promise<ImportResult> {
+    if (file.size > 10 * 1024 * 1024) return { success: false, headers: [], rows: [], error: 'Soubor je větší než 10 MB.' };
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -34,7 +35,8 @@ export class XlsxImporter implements ProductImporter {
           }
 
           // Read headers from first row
-          const headers = (rawRows[0] as unknown[]).map(h => String(h || '').trim()).filter(h => h.length > 0);
+          const headers = (rawRows[0] as unknown[]).map(h => String(h || '').trim());
+          if (new Set(headers.filter(Boolean)).size !== headers.filter(Boolean).length) throw new Error('Soubor má duplicitní hlavičky sloupců.');
           const rows: Record<string, string>[] = [];
 
           for (let i = 1; i < rawRows.length; i++) {
@@ -45,6 +47,7 @@ export class XlsxImporter implements ProductImporter {
             let hasData = false;
             
             headers.forEach((header, index) => {
+              if (!header) return;
               const val = rawRow[index];
               const stringVal = val !== undefined && val !== null ? String(val).trim() : '';
               row[header] = stringVal;

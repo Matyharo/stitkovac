@@ -1,4 +1,5 @@
 'use client';
+import AccessibleModal from '@/components/AccessibleModal';
 
 import React, { useState, useEffect, useTransition } from 'react';
 import Link from 'next/link';
@@ -6,7 +7,7 @@ import BulkSafety from './BulkSafety';
 import CreateSafetyCategory from './CreateSafetyCategory';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
-  getProducts,
+  getProductPage,
   updateProduct,
   deleteProduct,
   createProduct,
@@ -66,6 +67,8 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
   const importedCount = searchParams.get('imported');
   const updatedCount = searchParams.get('updated');
 
+  const [catalogStats, setCatalogStats] = useState({ total: 0, price: 0, ean: 0, safety: 0, contact: 0 });
+  const [totalFiltered, setTotalFiltered] = useState(0);
   const [products, setProducts] = useState<Product[]>([]);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -205,15 +208,19 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
   };
 
   // Load products from DB
+  const productRequestId = React.useRef(0);
   const loadProducts = async (query = '') => {
+    const requestId = ++productRequestId.current;
     setLoading(true);
     try {
-      const res = await getProducts(query);
-      setProducts(res);
+      const res = await getProductPage({ search: query, page: currentPage, pageSize: itemsPerPage === 'all' ? 500 : itemsPerPage, filters: selectedFilters, sort: sortBy });
+      if (requestId !== productRequestId.current) return;
+      setProducts(res.items);
+      setTotalFiltered(res.total); setCatalogStats(res.stats); setCurrentPage(res.page);
     } catch (err: any) {
-      setError('Nepodařilo se načíst seznam produktů.');
+      if (requestId === productRequestId.current) setError('Nepodařilo se načíst seznam produktů.');
     } finally {
-      setLoading(false);
+      if (requestId === productRequestId.current) setLoading(false);
     }
   };
 
@@ -244,95 +251,18 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
     startTransition(() => {
       loadProducts(debouncedSearch);
     });
-  }, [debouncedSearch]);
+  }, [debouncedSearch, currentPage, itemsPerPage, selectedFilters, sortBy]);
 
-  // Count helper variables for data quality overview
-  const countMissingPrice = products.filter(
-    (p) => p.price === null || p.price === undefined || p.price <= 0
-  ).length;
-
-  const countMissingEan = products.filter(
-    (p) => !p.ean || p.ean.trim() === ''
-  ).length;
-
-  const countMissingSafety = products.filter(
-    (p) => !p.safetyText || p.safetyText.trim() === ''
-  ).length;
-
-  const countMissingContact = products.filter(
-    (p) => !p.contactText || p.contactText.trim() === ''
-  ).length;
-
-  const getFilteredProducts = () => {
-    let result = products;
-    if (selectedFilters.length > 0) {
-      result = products.filter((prod) => {
-        const hasMissingPrice = prod.price === null || prod.price === undefined || prod.price <= 0;
-        const hasMissingEan = !prod.ean || prod.ean.trim() === '';
-        const hasMissingSafety = !prod.safetyText || prod.safetyText.trim() === '';
-        const hasMissingContact = !prod.contactText || prod.contactText.trim() === '';
-
-        return selectedFilters.some((f) => {
-          if (f === 'missing_price') return hasMissingPrice;
-          if (f === 'missing_ean') return hasMissingEan;
-          if (f === 'missing_safety') return hasMissingSafety;
-          if (f === 'missing_contact') return hasMissingContact;
-          return false;
-        });
-      });
-    }
-
-    // Apply sorting
-    return [...result].sort((a, b) => {
-      if (sortBy === 'name_asc') {
-        return a.name.localeCompare(b.name, 'cs', { sensitivity: 'base' });
-      }
-      if (sortBy === 'name_desc') {
-        return b.name.localeCompare(a.name, 'cs', { sensitivity: 'base' });
-      }
-      if (sortBy === 'brand_asc') {
-        const brandA = a.brand || '';
-        const brandB = b.brand || '';
-        return brandA.localeCompare(brandB, 'cs', { sensitivity: 'base' });
-      }
-      if (sortBy === 'brand_desc') {
-        const brandA = a.brand || '';
-        const brandB = b.brand || '';
-        return brandB.localeCompare(brandA, 'cs', { sensitivity: 'base' });
-      }
-      if (sortBy === 'sku_asc') {
-        return a.sku.localeCompare(b.sku, 'cs', { sensitivity: 'base' });
-      }
-      if (sortBy === 'price_asc') {
-        const priceA = a.price !== null ? a.price : Number.MAX_VALUE;
-        const priceB = b.price !== null ? b.price : Number.MAX_VALUE;
-        return priceA - priceB;
-      }
-      if (sortBy === 'price_desc') {
-        const priceA = a.price !== null ? a.price : -1;
-        const priceB = b.price !== null ? b.price : -1;
-        return priceB - priceA;
-      }
-      
-      // Default: updatedAt_desc
-      const dateA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-      const dateB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-      return dateB - dateA;
-    });
-  };
-
-  const filteredProducts = getFilteredProducts();
-
-  // Pagination calculation
-  const ITEMS_PER_PAGE = itemsPerPage === 'all' ? filteredProducts.length || 1 : itemsPerPage;
-  const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE);
-  const paginatedProducts = filteredProducts.slice(
-    (currentPage - 1) * ITEMS_PER_PAGE,
-    currentPage * ITEMS_PER_PAGE
-  );
-
-  const startItem = filteredProducts.length === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1;
-  const endItem = Math.min(currentPage * ITEMS_PER_PAGE, filteredProducts.length);
+  const countMissingPrice = catalogStats.price;
+  const countMissingEan = catalogStats.ean;
+  const countMissingSafety = catalogStats.safety;
+  const countMissingContact = catalogStats.contact;
+  const filteredProducts = products;
+  const ITEMS_PER_PAGE = itemsPerPage === 'all' ? 500 : itemsPerPage;
+  const totalPages = Math.ceil(totalFiltered / ITEMS_PER_PAGE);
+  const paginatedProducts = products;
+  const startItem = totalFiltered === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1;
+  const endItem = Math.min(currentPage * ITEMS_PER_PAGE, totalFiltered);
 
   // Scroll main container to top on page change
   const handlePageChange = (page: number) => {
@@ -402,6 +332,7 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
       brand: editingProduct.brand,
       price: isNaN(Number(priceNum)) ? null : priceNum,
       safetyText: editingProduct.safetyText,
+      expectedUpdatedAt: editingProduct.updatedAt ? new Date(editingProduct.updatedAt).toISOString() : undefined,
       confirmedSafetyCode: getConfirmedCode(`edit:${editingProduct.id}`, editingProduct.name, editingProduct.description || '', editingProduct.safetyText || ''),
       contactText: editingProduct.contactText,
       ean: editingProduct.ean,
@@ -959,12 +890,12 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
         <div className="text-xs text-slate-400 font-medium shrink-0">
           {selectedFilters.length > 0 ? (
             <>
-              Zobrazeno: <span className="font-bold text-indigo-600">{filteredProducts.length}</span> z{' '}
-              <span className="font-bold text-slate-700">{products.length}</span> produktů
+              Zobrazeno: <span className="font-bold text-indigo-600">{totalFiltered}</span> z{' '}
+              <span className="font-bold text-slate-700">{catalogStats.total}</span> produktů
             </>
           ) : (
             <>
-              Nalezeno: <span className="font-bold text-slate-700">{products.length}</span> produktů
+              Nalezeno: <span className="font-bold text-slate-700">{catalogStats.total}</span> produktů
             </>
           )}
         </div>
@@ -984,7 +915,7 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
                 : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
             }`}
           >
-            Všechny ({products.length})
+            Všechny ({catalogStats.total})
           </button>
 
           <button
@@ -1106,7 +1037,7 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
             <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin mx-auto mb-3" />
             <p className="text-sm font-medium text-slate-500">Načítání produktů...</p>
           </div>
-        ) : products.length === 0 ? (
+        ) : catalogStats.total === 0 ? (
           <div className="py-20 text-center max-w-sm mx-auto">
             <FileSpreadsheet className="w-12 h-12 text-slate-300 mx-auto mb-4" />
             <h3 className="font-bold text-slate-800 text-lg mb-1">Žádné produkty v katalogu</h3>
@@ -1283,12 +1214,12 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
                       <option value={20}>20 na stránku</option>
                       <option value={50}>50 na stránku</option>
                       <option value={100}>100 na stránku</option>
-                      <option value="all">Všechny</option>
+                      <option value="all">500 na stránku</option>
                     </select>
                   </div>
                   <div className="h-4 w-px bg-slate-200" />
                   <div>
-                    Zobrazeno {startItem}–{endItem} z {filteredProducts.length} produktů
+                    Zobrazeno {startItem}–{endItem} z {totalFiltered} produktů
                   </div>
                 </div>
 
@@ -1350,7 +1281,7 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
 
       {/* EDIT MODAL */}
       {editingProduct && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+        <AccessibleModal onClose={() => setEditingProduct(null)} className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden border border-slate-100 animate-in zoom-in-95 duration-200">
             <div className="bg-slate-900 text-white p-5 flex items-center justify-between shrink-0">
               <div>
@@ -1527,12 +1458,12 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
               </div>
             </form>
           </div>
-        </div>
+        </AccessibleModal>
       )}
 
       {/* CREATE MODAL */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+        <AccessibleModal onClose={() => setShowCreateModal(false)} className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden border border-slate-100 animate-in zoom-in-95 duration-200">
             <div className="bg-slate-900 text-white p-5 flex items-center justify-between shrink-0">
               <div>
@@ -1699,12 +1630,12 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
               </div>
             </form>
           </div>
-        </div>
+        </AccessibleModal>
       )}
 
       {/* DELETE CONFIRM MODAL */}
       {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+        <AccessibleModal onClose={() => setShowDeleteConfirm(null)} className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl p-6 border border-slate-100 animate-in zoom-in-95 duration-200">
             <div className="flex items-center gap-3 text-rose-600 mb-4">
               <Trash2 className="w-6 h-6 shrink-0" />
@@ -1729,12 +1660,12 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
               </button>
             </div>
           </div>
-        </div>
+        </AccessibleModal>
       )}
 
       {/* BULK DELETE CONFIRM MODAL */}
       {showBulkDeleteConfirm && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+        <AccessibleModal onClose={() => setShowBulkDeleteConfirm(false)} className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl p-6 border border-slate-100 animate-in zoom-in-95 duration-200">
             <div className="flex items-center gap-3 text-rose-600 mb-4">
               <Trash2 className="w-6 h-6 shrink-0" />
@@ -1759,7 +1690,7 @@ export default function ProductsPage({ canBulkSafety = false }: { canBulkSafety?
               </button>
             </div>
           </div>
-        </div>
+        </AccessibleModal>
       )}
     </div>
   );

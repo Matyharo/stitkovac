@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { assertAuthenticated } from '@/lib/auth';
 import * as XLSX from 'xlsx';
 
 export async function GET(req: NextRequest) {
+  try { await assertAuthenticated(true); } catch { return NextResponse.json({ error: 'Export je dostupný správci.' }, { status: 403 }); }
   try {
     const products = await prisma.product.findMany({
       orderBy: { sku: 'asc' },
@@ -46,6 +48,7 @@ export async function GET(req: NextRequest) {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Cache-Control': 'no-store',
         'Content-Disposition': `attachment; filename=stitkovac_katalog_${dateStr}.xlsx`,
       },
     });

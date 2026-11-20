@@ -91,7 +91,7 @@ export default function FeedImportTab({ onPendingCountChange }: { onPendingCount
         autoApplySafe: cfg.autoApplySafe,
         priceThresholdPercent: cfg.priceThresholdPercent || 30,
         checkEanValidity: cfg.checkEanValidity,
-        cronSecret: cfg.cronSecret || 'shoptet-feed-sync-secret',
+        cronSecret: cfg.cronSecret || '',
       });
       setPendingItems(pending);
       setSyncLogs(logs);
@@ -244,7 +244,7 @@ export default function FeedImportTab({ onPendingCountChange }: { onPendingCount
   const copyWebhookUrl = () => {
     if (typeof window === 'undefined') return;
     const origin = window.location.origin;
-    const webhookUrl = `${origin}/api/cron/sync-feed?secret=${configForm.cronSecret}`;
+    const webhookUrl = `curl -X POST "${origin}/api/cron/sync-feed" -H "Authorization: Bearer ${configForm.cronSecret}"`;
     navigator.clipboard.writeText(webhookUrl);
     setCopiedWebhook(true);
     setTimeout(() => setCopiedWebhook(false), 2500);
@@ -526,7 +526,7 @@ export default function FeedImportTab({ onPendingCountChange }: { onPendingCount
                   </p>
                   <div className="flex flex-wrap items-center gap-2">
                     <code className="text-xs font-mono bg-white px-2.5 py-1.5 rounded-lg border border-indigo-200 text-indigo-900 select-all">
-                      /api/cron/sync-feed?secret={configForm.cronSecret}
+                      /api/cron/sync-feed (Authorization: Bearer tajný_klíč)
                     </code>
                     <button
                       type="button"
@@ -534,7 +534,7 @@ export default function FeedImportTab({ onPendingCountChange }: { onPendingCount
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-white text-indigo-700 hover:bg-indigo-50 border border-indigo-200 rounded-lg transition-colors shadow-2xs cursor-pointer"
                     >
                       {copiedWebhook ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      {copiedWebhook ? 'Zkopírováno' : 'Kopírovat celé URL'}
+                      {copiedWebhook ? 'Zkopírováno' : 'Kopírovat příkaz pro cron'}
                     </button>
                   </div>
                 </div>

@@ -1,19 +1,19 @@
 import { PrismaClient } from '@prisma/client';
+import { hashPassword } from '../src/lib/passwords';
 
 const prisma = new PrismaClient();
 
 async function main() {
   console.log('🌱 Starting database seed...');
 
-  // 1. Seed Default Admin User (Password: stitkovac2026)
-  // Pre-calculated bcrypt hash for "stitkovac2026"
-  const defaultPasswordHash = '$2a$10$w8gZ9Y3q7pS4k4bL2p5N4.y.r3.z6.A.b.c.d.e.f.g.h.i.j'; 
-
+  const initialPassword = process.env.BASIC_AUTH_PASSWORD;
+  if (!initialPassword || initialPassword === 'stitkovac2026') throw new Error('Nastavte vlastní BASIC_AUTH_PASSWORD (alespoň 12 znaků).');
+  const defaultPasswordHash = await hashPassword(initialPassword);
   await prisma.user.upsert({
-    where: { username: 'admin' },
+    where: { username: (process.env.BASIC_AUTH_USER || 'admin').trim().toLowerCase() },
     update: {},
     create: {
-      username: 'admin',
+      username: (process.env.BASIC_AUTH_USER || 'admin').trim().toLowerCase(),
       name: 'Ing. Matouš Ferstl',
       passwordHash: defaultPasswordHash,
       role: 'admin',

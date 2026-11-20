@@ -3,8 +3,8 @@ import { getFeedConfig, syncProductsFromFeed } from '@/lib/feedSync';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: NextRequest) {
-  return handleSync(request);
+export async function GET() {
+  return NextResponse.json({ error: "Použijte POST s hlavičkou Authorization: Bearer." }, { status: 405, headers: { Allow: "POST" } });
 }
 
 export async function POST(request: NextRequest) {
@@ -14,15 +14,13 @@ export async function POST(request: NextRequest) {
 async function handleSync(request: NextRequest) {
   try {
     const config = await getFeedConfig();
-    const searchParams = request.nextUrl.searchParams;
-    const secretParam = searchParams.get('secret');
     const authHeader = request.headers.get('authorization');
     const bearerSecret = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
 
-    const providedSecret = secretParam || bearerSecret;
+    const providedSecret = bearerSecret;
 
     // Pokud je nastaven tajný klíč a neshoduje se, vrátíme 401
-    if (config.cronSecret && providedSecret !== config.cronSecret) {
+    if (!config.cronSecret || config.cronSecret === 'shoptet-feed-sync-secret' || providedSecret !== config.cronSecret) {
       return NextResponse.json(
         {
           success: false,

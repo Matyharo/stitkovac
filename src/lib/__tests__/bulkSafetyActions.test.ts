@@ -7,6 +7,7 @@ import { assertAuthenticated } from '../auth';
 import { writeFile } from 'node:fs/promises';
 import { previewBulkSafetyAction, applyBulkSafetyAction, createSafetyCategoryAction, suggestProductSafetyTextAction } from '@/app/actions';
 
+const cookieState = vi.hoisted(() => ({ token: '' }));
 const fixture = await vi.hoisted(async () => {
   const fs = await import('node:fs');
   const os = await import('node:os');
@@ -21,7 +22,7 @@ vi.mock('../db', async () => {
 });
 vi.mock('../auth', () => ({ getAuthenticatedUser: vi.fn(async () => ({ username: 'test', role: 'admin' })), assertAuthenticated: vi.fn(async () => ({ username: 'test', role: 'admin' })) }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
-vi.mock('next/headers', () => ({ cookies: vi.fn(async () => ({ get: vi.fn() })) }));
+vi.mock('next/headers', () => ({ cookies: vi.fn(async () => ({ get: () => ({ value: cookieState.token }), set: (_name: string, value: string) => { cookieState.token = value; }, delete: () => { cookieState.token = ''; } })) }));
 vi.mock('node:fs/promises', async importOriginal => ({ ...await importOriginal<typeof import('node:fs/promises')>(), mkdir: vi.fn(), writeFile: vi.fn(async () => {}) }));
 
 // This client has an isolated temporary SQLite database; never touches the application DB.
@@ -36,8 +37,11 @@ beforeAll(async () => {
 });
 afterAll(async () => { await prisma.$disconnect(); rmSync(directory, { recursive: true, force: true }); });
 beforeEach(async () => {
-  vi.mocked(assertAuthenticated).mockResolvedValue({ username: 'test', role: 'admin', name: 'Test' });
+  vi.mocked(assertAuthenticated).mockResolvedValue({ id: 'test-id', username: 'test', role: 'admin', name: 'Test' });
   vi.mocked(writeFile).mockReset().mockResolvedValue();
+  await prisma.userSession.deleteMany();
+  await prisma.loginThrottle.deleteMany();
+  await prisma.user.deleteMany();
   await prisma.product.deleteMany();
   await prisma.customSafetyCategory.deleteMany();
   await prisma.safetyCatalogState.deleteMany();
@@ -178,4 +182,90 @@ describe('category workbook API', () => {
     expect((await GET()).status).toBe(403);
     expect((await request('apply', bytes, preview.token)).status).toBe(403);
   });
+});
+
+describe('authentication, backup and pagination regressions', () => {
+  it('keeps legacy login working, upgrades its hash, and revokes sessions after a password change', async () => {
+    const { pbkdf2Sync } = await import('node:crypto');
+    const { login, changeUserPassword, logout } = await import('@/app/actions');
+    const salt = 'old';
+    const user = await prisma.user.create({ data: { username: 'legacy', name: 'Legacy', role: 'admin', passwordHash: `${salt}:${pbkdf2Sync('old', salt, 1000, 64, 'sha512').toString('hex')}` } });
+    expect((await login('legacy', 'old')).success).toBe(true);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).passwordHash).toMatch(/^scrypt/);
+    expect(await prisma.userSession.count()).toBe(1);
+    expect((await changeUserPassword(user.id, 'Nové silné heslo 123')).success).toBe(true);
+    expect(await prisma.userSession.count()).toBe(0);
+    expect((await login('legacy', 'Nové silné heslo 123')).success).toBe(true);
+    await logout(); expect(await prisma.userSession.count()).toBe(0);
+  });
+  it('throttles repeated login failures and does not create a default admin', async () => {
+    const { login } = await import('@/app/actions');
+    for (let i = 0; i < 10; i++) await login('unknown', 'wrong');
+    expect((await login('unknown', 'wrong')).error).toContain('Příliš mnoho');
+    expect(await prisma.user.count()).toBe(0);
+  });
+  it('backs up the open SQLite database consistently, with product records intact', async () => {
+    const { GET } = await import('@/app/api/backup/db/route');
+    const response = await GET(); expect(response.status).toBe(200);
+    const database = join(directory, 'backup.db'); writeFileSync(database, new Uint8Array(await response.arrayBuffer()));
+    const { PrismaClient } = await import('@prisma/client');
+    const copy = new PrismaClient({ datasourceUrl: `file:${database}` });
+    try { expect(await copy.product.count()).toBe(2); expect(await copy.$queryRawUnsafe('PRAGMA integrity_check')).toEqual([{ integrity_check: 'ok' }]); }
+    finally { await copy.$disconnect(); }
+  });
+  it('protects maintenance actions and backup export from ordinary users', async () => {
+    vi.mocked(assertAuthenticated).mockImplementation(async (admin) => { if (admin) throw new Error('Forbidden'); return { id: 'user', username: 'user', name: 'User', role: 'user' }; });
+    const { clearAllProducts, triggerFeedSyncAction } = await import('@/app/actions');
+    await expect(clearAllProducts()).rejects.toThrow('Forbidden');
+    await expect(triggerFeedSyncAction('https://localhost')).rejects.toThrow('Forbidden');
+    const { GET } = await import('@/app/api/backup/db/route'); expect((await GET()).status).toBe(403);
+    expect(await prisma.product.count()).toBe(2);
+  });
+  it('returns server-paginated products with consistent filter totals', async () => {
+    const { queryProductPage } = await import('../productPage');
+    const page = await queryProductPage({ page: 1, pageSize: 1, filters: ['missing_price'] });
+    expect(page.items).toHaveLength(1); expect(page.total).toBe(2); expect(page.stats.total).toBe(2);
+    const next = await queryProductPage({ page: 2, pageSize: 1 });
+    expect(next.items[0].id).not.toBe(page.items[0].id);
+  });
+  it('rolls back a product import containing duplicate SKUs before any product is written', async () => {
+    const { saveImportedProducts } = await import('@/app/actions');
+    const result = await saveImportedProducts([{ sku: 'duplicate', name: 'One' }, { sku: 'duplicate', name: 'Two' }]);
+    expect(result.success).toBe(false); expect(await prisma.product.count({ where: { sku: 'duplicate' } })).toBe(0);
+  });
+});
+
+it('restores bulk safety text only after a matching preview and preserves later edits', async () => {
+  const fs = await import('node:fs');
+  const backupModule = await import('../backup');
+  const { POST } = await import('@/app/api/safety-backups/route');
+  const folder = join(process.cwd(), 'prisma', 'safety-backups');
+  fs.mkdirSync(folder, { recursive: true });
+  const filename = `safety-${Date.now()}-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.json`;
+  const filenamePath = join(folder, filename);
+  const a = await prisma.product.create({ data: { sku: 'restore-a', name: 'A', safetyText: 'nový' } });
+  const b = await prisma.product.create({ data: { sku: 'restore-b', name: 'B', safetyText: 'pozdější editace' } });
+  fs.writeFileSync(filenamePath, JSON.stringify({ changes: [{ id: a.id, before: 'původní', after: 'nový' }, { id: b.id, before: 'původní B', after: 'nový B' }] }));
+  const snapshot = vi.spyOn(backupModule, 'createDatabaseSnapshot').mockResolvedValueOnce();
+  const request = (mode: string, token?: string) => new Request('http://localhost/api/safety-backups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename, mode, token }) });
+  try {
+    const preview = await (await POST(request('preview'))).json();
+    expect(preview).toMatchObject({ count: 1, skipped: 1 });
+    const applied = await POST(request('apply', preview.token));
+    expect(applied.status).toBe(200);
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: a.id } })).safetyText).toBe('původní');
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: b.id } })).safetyText).toBe('pozdější editace');
+  } finally { snapshot.mockRestore(); fs.unlinkSync(filenamePath); }
+});
+
+it('edits a safety category with a version check and prevents automatic bulk assignment in manual mode', async () => {
+  const { PATCH } = await import('@/app/api/safety-categories/route');
+  const { loadApplicationSafetyCatalog } = await import('../customSafetyCatalog');
+  const catalog = await loadApplicationSafetyCatalog();
+  const old = catalog.templates.find(entry => entry.code !== 'NEURCENO')!;
+  const input = { code: old.code, name: old.productType, area: old.area, safetyText: 'Bezpečnostní text pro regresní test.', mode: 'Ruční posouzení', version: JSON.stringify(old) };
+  const request = () => new Request('http://localhost/api/safety-categories', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+  expect((await PATCH(request())).status).toBe(200);
+  expect((await loadApplicationSafetyCatalog()).byCode.get(old.code)?.mode).toBe('Ruční posouzení');
+  expect((await PATCH(request())).status).toBe(400);
 });

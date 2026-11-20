@@ -98,7 +98,7 @@ describe('PDF Generation with Czech Diacritics & Safety Text Overflow Detection'
     const catalog = loadSafetyTemplates();
     const lashLep = catalog.byCode.get('LASH_LEP')!;
 
-    const pdfBytes = await generateLabelsPdf(
+    await expect(generateLabelsPdf(
       [
         {
           id: 'p1',
@@ -113,6 +113,24 @@ describe('PDF Generation with Czech Diacritics & Safety Text Overflow Detection'
         },
       ],
       standardTemplate,
+      1
+    )).rejects.toThrow("nevejde");
+
+    const pdfBytes = await generateLabelsPdf(
+      [
+        {
+          id: 'p1',
+          sku: 'LASH-001',
+          name: 'Profesionální lepidlo na řasy Extreme Hold 5 ml',
+          brand: 'Maxymova',
+          price: 690,
+          safetyText: lashLep.safetyText,
+          contactText: 'Evolution Beauty Institut s. r. o.\nIČO: 07996811\n5. května 70, Praha 4',
+          ean: '8590001234567',
+          quantity: 2,
+        },
+      ],
+      { ...standardTemplate, layoutConfig: JSON.stringify({ ...JSON.parse(standardTemplate.layoutConfig), labelWidth: 190, labelHeight: 85, columns: 1, rows: 3 }) },
       1
     );
 

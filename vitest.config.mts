@@ -4,6 +4,7 @@ import path from 'path';
 export default defineConfig({
   test: {
     globals: true,
+    globalSetup: ['./scripts/testDatabase.ts'],
     environment: 'node',
     include: ['src/**/*.test.ts'],
   },
